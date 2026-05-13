@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SLSIE — Sri Lanka Sports Intelligence Ecosystem</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <style>
+    :root { --brand: #1F4E79; --accent: #2E75B6; }
+    body {
+      min-height: 100vh;
+      background: linear-gradient(135deg, #0d2137 0%, #1F4E79 45%, #2980B9 100%);
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Segoe UI', Arial, sans-serif;
+    }
+    .login-wrap { width: 100%; max-width: 440px; padding: 1rem; }
+    .logo-ring {
+      width: 80px; height: 80px; border-radius: 50%;
+      background: rgba(255,255,255,0.12); border: 3px solid rgba(255,255,255,0.4);
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 1rem;
+    }
+    .logo-ring i { font-size: 2.2rem; color: #fff; }
+    .card { border: none; border-radius: 18px; box-shadow: 0 24px 64px rgba(0,0,0,0.35); }
+    .card-header {
+      background: linear-gradient(135deg, var(--brand), var(--accent));
+      border-radius: 18px 18px 0 0 !important; padding: 2rem; text-align: center; border: none;
+    }
+    .card-header h4 { color: #fff; font-weight: 700; letter-spacing: .5px; margin: 0; }
+    .card-header p { color: rgba(255,255,255,0.75); font-size: .85rem; margin: .3rem 0 0; }
+    .card-body { padding: 2rem; }
+    .form-control { border-radius: 8px; border: 1.5px solid #dee2e6; padding: .65rem 1rem; font-size: .95rem; }
+    .form-control:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(46,117,182,.15); }
+    .btn-login {
+      background: linear-gradient(135deg, var(--brand), var(--accent));
+      border: none; border-radius: 8px; padding: .75rem; font-weight: 600;
+      letter-spacing: .3px; font-size: 1rem; color: #fff; width: 100%;
+      transition: opacity .2s;
+    }
+    .btn-login:hover { opacity: .9; color: #fff; }
+    .demo-creds { background: #f0f6ff; border-radius: 10px; padding: 1rem; font-size: .82rem; }
+    .demo-creds .cred { display: flex; justify-content: space-between; padding: 2px 0; }
+    .cred-role { font-weight: 600; color: var(--brand); }
+    .cred-val { color: #555; font-family: monospace; }
+    .alert-error { border-radius: 8px; font-size: .9rem; }
+    .input-group-text { background: #f8f9fa; border-right: none; }
+    .form-control.no-left-border { border-left: none; }
+  </style>
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="logo-ring"><i class="bi bi-trophy-fill"></i></div>
+    <div class="card">
+      <div class="card-header">
+        <h4><i class="bi bi-bar-chart-line-fill me-2"></i>SLSIE</h4>
+        <p>Sri Lanka Sports Intelligence Ecosystem<br>
+           <span style="font-size:.78rem;opacity:.8">National Olympic Committee of Sri Lanka</span>
+        </p>
+      </div>
+      <div class="card-body">
+        <div id="errMsg" class="alert alert-danger alert-error d-none"></div>
+
+        <form id="loginForm">
+          <div class="mb-3">
+            <label class="form-label fw-semibold text-muted small">EMAIL ADDRESS</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="bi bi-envelope text-muted"></i></span>
+              <input id="email" type="email" class="form-control no-left-border" placeholder="your@email.com" required>
+            </div>
+          </div>
+          <div class="mb-4">
+            <label class="form-label fw-semibold text-muted small">PASSWORD</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="bi bi-lock text-muted"></i></span>
+              <input id="password" type="password" class="form-control no-left-border" placeholder="••••••••" required>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-login" id="loginBtn">
+            <span id="loginText"><i class="bi bi-box-arrow-in-right me-2"></i>Sign In</span>
+            <span id="loginSpinner" class="d-none"><span class="spinner-border spinner-border-sm me-2"></span>Signing in…</span>
+          </button>
+        </form>
+
+        <div class="mt-4">
+          <p class="text-muted text-center small fw-semibold mb-2">DEMO CREDENTIALS</p>
+          <div class="demo-creds">
+            <div class="cred"><span class="cred-role">NOCSL Admin</span><span class="cred-val">admin@nocsl.lk / admin123</span></div>
+            <div class="cred mt-1"><span class="cred-role">Cricket Federation</span><span class="cred-val">cricket@nocsl.lk / fed123</span></div>
+            <div class="cred mt-1"><span class="cred-role">Ministry of Sports</span><span class="cred-val">ministry@sports.gov.lk / gov123</span></div>
+            <div class="cred mt-1"><span class="cred-role">UNDP Donor</span><span class="cred-val">donor@undp.lk / donor123</span></div>
+          </div>
+          <p class="text-center mt-2" style="font-size:.75rem;color:#aaa">
+            Click any row to auto-fill credentials
+          </p>
+        </div>
+      </div>
+    </div>
+    <p class="text-center mt-3" style="color:rgba(255,255,255,.4);font-size:.78rem;">
+      © 2025 Everpower Software Solutions · NOCSL SLSIE v1.0
+    </p>
+  </div>
+
+  <script>
+    // Auto-fill on demo credential click
+    document.querySelectorAll('.cred').forEach(el => {
+      el.style.cursor = 'pointer';
+      el.addEventListener('click', () => {
+        const val = el.querySelector('.cred-val').textContent.split(' / ');
+        document.getElementById('email').value = val[0];
+        document.getElementById('password').value = val[1];
+      });
+    });
+
+    document.getElementById('loginForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      const btn = document.getElementById('loginBtn');
+      document.getElementById('loginText').classList.add('d-none');
+      document.getElementById('loginSpinner').classList.remove('d-none');
+      btn.disabled = true;
+      document.getElementById('errMsg').classList.add('d-none');
+
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: document.getElementById('email').value,
+            password: document.getElementById('password').value
+          })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          window.location.href = '/app#/dashboard';
+        } else {
+          const err = document.getElementById('errMsg');
+          err.textContent = '⚠ ' + (data.error || 'Login failed. Please check your credentials.');
+          err.classList.remove('d-none');
+        }
+      } catch {
+        const err = document.getElementById('errMsg');
+        err.textContent = '⚠ Cannot connect to server. Please try again.';
+        err.classList.remove('d-none');
+      } finally {
+        document.getElementById('loginText').classList.remove('d-none');
+        document.getElementById('loginSpinner').classList.add('d-none');
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "slsie",
+  "version": "1.0.0",
+  "description": "Sri Lanka Sports Intelligence Ecosystem — National Olympic Committee of Sri Lanka",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "docx": "^9.6.1",
+    "express": "^4.18.2",
+    "express-session": "^1.17.3"
+  }
+}
