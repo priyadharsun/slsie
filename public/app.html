@@ -29,6 +29,8 @@
         <span class="nav-badge" id="badge-feds">34</span></a></li>
       <li><a href="#/governance"   class="nav-link" data-view="governance">
         <i class="bi bi-bar-chart-steps"></i><span>Governance Benchmark</span></a></li>
+      <li><a href="#/compliance"   class="nav-link" data-view="compliance">
+        <i class="bi bi-shield-check"></i><span>Compliance &amp; Gazette</span></a></li>
       <li><a href="#/athletes"     class="nav-link" data-view="athletes">
         <i class="bi bi-people-fill"></i><span>Athletes</span></a></li>
       <li><a href="#/fitforlife"   class="nav-link" data-view="fitforlife">
@@ -107,7 +109,38 @@
     </div>
   </div>
 
+  <!-- CHATBOT -->
+  <button id="chatbotToggle" class="chatbot-toggle" title="Ask SLSIE AI" onclick="toggleChatbot()">
+    <i class="bi bi-stars" id="chatbotIcon"></i>
+  </button>
+
+  <div id="chatbotPanel" class="chatbot-panel d-none">
+    <div class="chatbot-head">
+      <div class="d-flex align-items-center gap-2">
+        <div class="chatbot-avatar"><i class="bi bi-stars"></i></div>
+        <div>
+          <div class="chatbot-name">SLSIE Intelligence</div>
+          <div class="chatbot-status"><i class="bi bi-circle-fill text-success me-1" style="font-size:.45rem"></i>AI Assistant</div>
+        </div>
+      </div>
+      <div class="chatbot-head-actions">
+        <button class="chatbot-maximize" id="chatbotMaxBtn" onclick="toggleMaximize()" title="Expand"><i class="bi bi-arrows-fullscreen"></i></button>
+        <button class="chatbot-close" onclick="toggleChatbot()"><i class="bi bi-x-lg"></i></button>
+      </div>
+    </div>
+    <div class="chatbot-messages" id="chatbotMessages">
+      <div class="chat-msg chat-ai">
+        <div class="chat-bubble">Hello! I'm the SLSIE AI assistant. Ask me about federations, athlete performance, governance scores, compliance status, or anything else about Sri Lanka sports data.</div>
+      </div>
+    </div>
+    <div class="chatbot-input-row">
+      <input type="text" id="chatbotInput" class="chatbot-input" placeholder="Ask about federations, athletes, compliance…" onkeydown="if(event.key==='Enter')sendChat()">
+      <button class="chatbot-send" onclick="sendChat()" id="chatbotSendBtn"><i class="bi bi-send-fill"></i></button>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <script src="/js/app.js"></script>
 </body>
 </html>

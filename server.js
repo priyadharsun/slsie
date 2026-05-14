@@ -5,6 +5,32 @@ const session = require('express-session');
 const path = require('path');
 const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
         AlignmentType, HeadingLevel, WidthType, ShadingType, BorderStyle } = require('docx');
+const Anthropic = require('@anthropic-ai/sdk');
+
+// ─── AI CLIENT ────────────────────────────────────────────────────────────────
+let ai = null;
+if (process.env.ANTHROPIC_API_KEY) {
+  ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  console.log('🤖 AI Assistant: Claude API connected');
+} else {
+  console.log('⚠  AI Assistant: ANTHROPIC_API_KEY not set — AI features disabled');
+}
+
+async function aiAsk(systemPrompt, userMsg, maxTokens = 350) {
+  if (!ai) return null;
+  try {
+    const r = await ai.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: maxTokens,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userMsg }],
+    });
+    return r.content[0]?.text || null;
+  } catch (e) {
+    console.error('AI error:', e.message);
+    return null;
+  }
+}
 
 // ─── DATABASE ─────────────────────────────────────────────────────────────────
 const db = new DatabaseSync(path.join(__dirname, 'slsie.db'));
@@ -33,7 +59,13 @@ CREATE TABLE IF NOT EXISTS federations (
   total_members INTEGER DEFAULT 0,
   athletes_count INTEGER DEFAULT 0,
   province TEXT,
-  color TEXT DEFAULT '#2E75B6'
+  color TEXT DEFAULT '#2E75B6',
+  annual_turnover REAL DEFAULT 0,
+  affiliated_clubs INTEGER DEFAULT 0,
+  agm_last_date TEXT,
+  financial_stmt_date TEXT,
+  strategic_plan_year INTEGER,
+  national_championship_date TEXT
 );
 
 CREATE TABLE IF NOT EXISTS governance_scores (
@@ -117,7 +149,26 @@ CREATE TABLE IF NOT EXISTS training_loads (
   chronic_load REAL,
   acwr REAL
 );
+
+CREATE TABLE IF NOT EXISTS ec_officers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  federation_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  gender TEXT DEFAULT 'M',
+  role TEXT NOT NULL,
+  appointed_year INTEGER,
+  is_disqualified INTEGER DEFAULT 0,
+  disqualification_notes TEXT,
+  status TEXT DEFAULT 'active',
+  FOREIGN KEY(federation_id) REFERENCES federations(id)
+);
 `);
+
+// Schema migrations for existing databases
+['annual_turnover REAL DEFAULT 0', 'affiliated_clubs INTEGER DEFAULT 0',
+ 'agm_last_date TEXT', 'financial_stmt_date TEXT',
+ 'strategic_plan_year INTEGER', 'national_championship_date TEXT',
+].forEach(col => { try { db.exec(`ALTER TABLE federations ADD COLUMN ${col}`); } catch {} });
 
 // ─── SEED ─────────────────────────────────────────────────────────────────────
 function seed() {
@@ -411,12 +462,178 @@ function seed() {
     }
   }
 
+  // Federation compliance & grading data [id, clubs, turnover_LKR, agm, fin_stmt, strat_year, champ]
+  const compData = [
+    [1,  45, 180000000, '2025-03-15', '2025-05-10', 2025, '2025-04-20'],
+    [2,  28,  55000000, '2025-04-10', '2025-05-08', 2025, '2025-03-15'],
+    [3,  38,  75000000, '2024-12-10', '2025-02-05', 2024, '2025-01-20'],
+    [4,  20,  22000000, '2025-02-20', '2025-04-15', 2025, '2025-03-10'],
+    [5,  22,  28000000, '2024-08-05',  null,         2023, '2024-10-12'],
+    [6,  18,  15000000, '2025-01-18', '2025-03-22', 2024, '2025-02-14'],
+    [7,  12,   8000000,  null,         '2025-04-05', 2025, '2025-02-28'],
+    [8,  10,   6000000, '2025-05-02', '2025-05-12', 2025, '2025-04-30'],
+    [9,  22,  18000000, '2025-03-08', '2025-05-05', 2025, '2025-04-08'],
+    [10, 14,   9000000, '2024-11-20', '2025-01-15', 2024, '2024-12-10'],
+    [11,  8,   4000000, '2025-02-12',  null,         2024, '2025-02-25'],
+    [12,  6,   3000000, '2025-04-18', '2025-05-08', 2025, '2025-03-20'],
+    [13,  7,   4000000,  null,          null,         2023,  null],
+    [14,  8,   4000000, '2025-03-25', '2025-05-15', 2024, '2025-03-25'],
+    [15, 10,   5000000, '2025-01-22', '2025-03-10', 2025, '2025-02-05'],
+    [16, 14,   7000000, '2025-02-14', '2025-04-20', 2025, '2025-03-01'],
+    [17,  6,   3000000, '2025-03-18', '2025-05-02', 2025, '2025-04-15'],
+    [18,  8,   4000000, '2025-04-05', '2025-05-08', 2025, '2025-05-01'],
+    [19, 22,  12000000, '2025-01-15', '2025-03-08', 2025, '2025-02-20'],
+    [20, 18,  10000000, '2025-02-28', '2025-04-22', 2025, '2025-03-18'],
+    [21,  8,   4000000, '2024-09-12',  null,         2024, '2024-11-05'],
+    [22, 20,  12000000, '2025-03-20', '2025-05-10', 2025, '2025-04-12'],
+    [23, 16,  11000000, '2025-01-28', '2025-03-15', 2025, '2025-02-22'],
+    [24,  5,   2500000, '2025-04-08', '2025-05-05', 2025, '2025-04-20'],
+    [25,  4,   2000000, '2025-03-15', '2025-04-28', 2025, '2025-04-05'],
+    [26,  3,   2000000,  null,          null,         2023,  null],
+    [27,  5,   2500000, '2025-02-22', '2025-04-18', 2025, '2025-03-28'],
+    [28,  8,   3500000, '2025-01-30', '2025-03-25', 2025, '2025-02-28'],
+    [29,  5,   2000000, '2025-02-15', '2025-04-05', 2024, '2025-03-10'],
+    [30, 15,   8000000, '2025-03-22', '2025-05-08', 2025, '2025-04-18'],
+    [31,  7,   3000000,  null,          null,         2024, '2025-01-25'],
+    [32,  6,   2000000, '2025-04-12', '2025-05-05', 2025, '2025-05-02'],
+    [33, 12,   5000000, '2025-02-08', '2025-04-10', 2025,  null],
+    [34,  8,   3500000, '2025-03-10', '2025-04-25', 2025, '2025-04-20'],
+  ];
+  const updComp = db.prepare('UPDATE federations SET affiliated_clubs=?,annual_turnover=?,agm_last_date=?,financial_stmt_date=?,strategic_plan_year=?,national_championship_date=? WHERE id=?');
+  compData.forEach(([id, clubs, turn, agm, fin, splan, champ]) =>
+    updComp.run(clubs, turn, agm, fin, splan, champ, id));
+
+  // EC Officers [fed_id, name, gender, role, appointed_year, is_disqualified, notes]
+  const ecOfficers = [
+    [1, 'Shammi Silva',        'M', 'President',  2017, 0, null],   // at 8yr term limit
+    [1, 'Mohan de Silva',      'M', 'Secretary',  2019, 0, null],
+    [1, 'Sujeewa Kumara',      'M', 'Treasurer',  2021, 0, null],
+    [1, 'Chamari Wijeratne',   'F', 'EC Member',  2018, 0, null],
+    [1, 'Dilhara Peiris',      'F', 'EC Member',  2020, 0, null],
+    [1, 'Kasun Rajapaksha',    'M', 'EC Member',  2022, 0, null],
+    [2, 'Jagath Perera',       'M', 'President',  2020, 0, null],
+    [2, 'Nimal Fernando',      'M', 'Secretary',  2021, 0, null],
+    [2, 'Suresh Kumara',       'M', 'Treasurer',  2022, 0, null],
+    [2, 'Nilani Dissanayake',  'F', 'EC Member',  2021, 0, null],
+    [2, 'Priyanka Senaratne',  'F', 'EC Member',  2022, 0, null],
+    [2, 'Chaminda Jayasinghe', 'M', 'EC Member',  2023, 0, null],
+    [3, 'Jaswar Umar',         'M', 'President',  2018, 0, null],
+    [3, 'Sampath Nanayakkara', 'M', 'Secretary',  2019, 0, null],
+    [3, 'Dilip Jayawardena',   'M', 'Treasurer',  2017, 0, null],  // at 8yr term limit
+    [3, 'Fathima Rizwa',       'F', 'EC Member',  2020, 0, null],
+    [3, 'Nishantha Perera',    'M', 'EC Member',  2021, 0, null],
+    [3, 'Chamara Subasinghe',  'M', 'EC Member',  2022, 0, null],
+    [4, 'Asanka Gurusinha',    'M', 'President',  2022, 0, null],   // 0 female → quota fail
+    [4, 'Pathum Jayawardena',  'M', 'Secretary',  2022, 0, null],
+    [4, 'Ramesh Silva',        'M', 'Treasurer',  2023, 0, null],
+    [4, 'Dinesh Pathirana',    'M', 'EC Member',  2022, 0, null],
+    [4, 'Shanaka Rodrigo',     'M', 'EC Member',  2023, 0, null],
+    [5, 'Dilhara Fernando',    'M', 'President',  2015, 1, 'Convicted of criminal offence (Gazette Reg. Sec. 22.1.f)'],
+    [5, 'Roshan Jayakody',     'M', 'Secretary',  2021, 0, null],
+    [5, 'Saman Bandara',       'M', 'Treasurer',  2022, 0, null],
+    [5, 'Harshini Jayaratne',  'F', 'EC Member',  2022, 0, null],
+    [5, 'Chamathi de Silva',   'F', 'EC Member',  2023, 0, null],
+    [5, 'Ruwan Wijeratne',     'M', 'EC Member',  2021, 0, null],
+  ];
+  const insEc = db.prepare('INSERT INTO ec_officers (federation_id,name,gender,role,appointed_year,is_disqualified,disqualification_notes) VALUES (?,?,?,?,?,?,?)');
+  ecOfficers.forEach(o => insEc.run(...o));
+
   console.log('✅ Database seeded successfully.');
 }
 
 // Run seed only if empty
 const fedCount = db.prepare('SELECT COUNT(*) as c FROM federations').get();
 if (fedCount.c === 0) seed();
+
+// Data migration: populate gazette compliance fields if still at defaults
+const needsCompMigration = db.prepare('SELECT COUNT(*) as c FROM federations WHERE affiliated_clubs > 0').get().c === 0;
+if (needsCompMigration && fedCount.c > 0) {
+  const compData = [
+    [1,  45, 180000000, '2025-03-15', '2025-05-10', 2025, '2025-04-20'],
+    [2,  28,  55000000, '2025-04-10', '2025-05-08', 2025, '2025-03-15'],
+    [3,  38,  75000000, '2024-12-10', '2025-02-05', 2024, '2025-01-20'],
+    [4,  20,  22000000, '2025-02-20', '2025-04-15', 2025, '2025-03-10'],
+    [5,  22,  28000000, '2024-08-05',  null,         2023, '2024-10-12'],
+    [6,  18,  15000000, '2025-01-18', '2025-03-22', 2024, '2025-02-14'],
+    [7,  12,   8000000,  null,         '2025-04-05', 2025, '2025-02-28'],
+    [8,  10,   6000000, '2025-05-02', '2025-05-12', 2025, '2025-04-30'],
+    [9,  22,  18000000, '2025-03-08', '2025-05-05', 2025, '2025-04-08'],
+    [10, 14,   9000000, '2024-11-20', '2025-01-15', 2024, '2024-12-10'],
+    [11,  8,   4000000, '2025-02-12',  null,         2024, '2025-02-25'],
+    [12,  6,   3000000, '2025-04-18', '2025-05-08', 2025, '2025-03-20'],
+    [13,  7,   4000000,  null,          null,         2023,  null],
+    [14,  8,   4000000, '2025-03-25', '2025-05-15', 2024, '2025-03-25'],
+    [15, 10,   5000000, '2025-01-22', '2025-03-10', 2025, '2025-02-05'],
+    [16, 14,   7000000, '2025-02-14', '2025-04-20', 2025, '2025-03-01'],
+    [17,  6,   3000000, '2025-03-18', '2025-05-02', 2025, '2025-04-15'],
+    [18,  8,   4000000, '2025-04-05', '2025-05-08', 2025, '2025-05-01'],
+    [19, 22,  12000000, '2025-01-15', '2025-03-08', 2025, '2025-02-20'],
+    [20, 18,  10000000, '2025-02-28', '2025-04-22', 2025, '2025-03-18'],
+    [21,  8,   4000000, '2024-09-12',  null,         2024, '2024-11-05'],
+    [22, 20,  12000000, '2025-03-20', '2025-05-10', 2025, '2025-04-12'],
+    [23, 16,  11000000, '2025-01-28', '2025-03-15', 2025, '2025-02-22'],
+    [24,  5,   2500000, '2025-04-08', '2025-05-05', 2025, '2025-04-20'],
+    [25,  4,   2000000, '2025-03-15', '2025-04-28', 2025, '2025-04-05'],
+    [26,  3,   2000000,  null,          null,         2023,  null],
+    [27,  5,   2500000, '2025-02-22', '2025-04-18', 2025, '2025-03-28'],
+    [28,  8,   3500000, '2025-01-30', '2025-03-25', 2025, '2025-02-28'],
+    [29,  5,   2000000, '2025-02-15', '2025-04-05', 2024, '2025-03-10'],
+    [30, 15,   8000000, '2025-03-22', '2025-05-08', 2025, '2025-04-18'],
+    [31,  7,   3000000,  null,          null,         2024, '2025-01-25'],
+    [32,  6,   2000000, '2025-04-12', '2025-05-05', 2025, '2025-05-02'],
+    [33, 12,   5000000, '2025-02-08', '2025-04-10', 2025,  null],
+    [34,  8,   3500000, '2025-03-10', '2025-04-25', 2025, '2025-04-20'],
+  ];
+  const updComp = db.prepare('UPDATE federations SET affiliated_clubs=?,annual_turnover=?,agm_last_date=?,financial_stmt_date=?,strategic_plan_year=?,national_championship_date=? WHERE id=?');
+  compData.forEach(([id, clubs, turn, agm, fin, splan, champ]) =>
+    updComp.run(clubs, turn, agm, fin, splan, champ, id));
+  console.log('✅ Gazette compliance data migrated.');
+}
+
+// EC officers migration
+const needsEcMigration = db.prepare('SELECT COUNT(*) as c FROM ec_officers').get().c === 0 && fedCount.c > 0;
+if (needsEcMigration) {
+  const ecOfficers = [
+    [1, 'Shammi Silva',        'M', 'President',  2017, 0, null],
+    [1, 'Mohan de Silva',      'M', 'Secretary',  2019, 0, null],
+    [1, 'Sujeewa Kumara',      'M', 'Treasurer',  2021, 0, null],
+    [1, 'Chamari Wijeratne',   'F', 'EC Member',  2018, 0, null],
+    [1, 'Dilhara Peiris',      'F', 'EC Member',  2020, 0, null],
+    [1, 'Kasun Rajapaksha',    'M', 'EC Member',  2022, 0, null],
+    [2, 'Jagath Perera',       'M', 'President',  2020, 0, null],
+    [2, 'Nimal Fernando',      'M', 'Secretary',  2021, 0, null],
+    [2, 'Suresh Kumara',       'M', 'Treasurer',  2022, 0, null],
+    [2, 'Nilani Dissanayake',  'F', 'EC Member',  2021, 0, null],
+    [2, 'Priyanka Senaratne',  'F', 'EC Member',  2022, 0, null],
+    [2, 'Chaminda Jayasinghe', 'M', 'EC Member',  2023, 0, null],
+    [3, 'Jaswar Umar',         'M', 'President',  2018, 0, null],
+    [3, 'Sampath Nanayakkara', 'M', 'Secretary',  2019, 0, null],
+    [3, 'Dilip Jayawardena',   'M', 'Treasurer',  2017, 0, null],
+    [3, 'Fathima Rizwa',       'F', 'EC Member',  2020, 0, null],
+    [3, 'Nishantha Perera',    'M', 'EC Member',  2021, 0, null],
+    [3, 'Chamara Subasinghe',  'M', 'EC Member',  2022, 0, null],
+    [4, 'Asanka Gurusinha',    'M', 'President',  2022, 0, null],
+    [4, 'Pathum Jayawardena',  'M', 'Secretary',  2022, 0, null],
+    [4, 'Ramesh Silva',        'M', 'Treasurer',  2023, 0, null],
+    [4, 'Dinesh Pathirana',    'M', 'EC Member',  2022, 0, null],
+    [4, 'Shanaka Rodrigo',     'M', 'EC Member',  2023, 0, null],
+    [5, 'Dilhara Fernando',    'M', 'President',  2015, 1, 'Convicted of criminal offence (Gazette Reg. Sec. 22.1.f)'],
+    [5, 'Roshan Jayakody',     'M', 'Secretary',  2021, 0, null],
+    [5, 'Saman Bandara',       'M', 'Treasurer',  2022, 0, null],
+    [5, 'Harshini Jayaratne',  'F', 'EC Member',  2022, 0, null],
+    [5, 'Chamathi de Silva',   'F', 'EC Member',  2023, 0, null],
+    [5, 'Ruwan Wijeratne',     'M', 'EC Member',  2021, 0, null],
+  ];
+  const insEc = db.prepare('INSERT INTO ec_officers (federation_id,name,gender,role,appointed_year,is_disqualified,disqualification_notes) VALUES (?,?,?,?,?,?,?)');
+  ecOfficers.forEach(o => insEc.run(...o));
+  console.log('✅ EC officers migrated.');
+}
+
+function fedGrade(clubs, turnover) {
+  if (clubs >= 25 && turnover >= 50000000) return 'A';
+  if (clubs >= 15 && turnover >= 10000000) return 'B';
+  return 'C';
+}
 
 // ─── EXPRESS APP ─────────────────────────────────────────────────────────────
 const app = express();
@@ -712,6 +929,253 @@ app.post('/api/athletes/:id/activity', auth, authWrite, (req, res) => {
   res.json({ ok: true });
 });
 
+// ─── COMPLIANCE & GAZETTE ────────────────────────────────────────────────────
+
+function complianceChecks(f, femaleEcCount) {
+  const YEAR = 2025;
+  const agmCompliant  = !!(f.agm_last_date  && new Date(f.agm_last_date).getFullYear()  >= YEAR);
+  const finCompliant  = !!(f.financial_stmt_date && new Date(f.financial_stmt_date).getFullYear() >= YEAR);
+  const stratCompliant = !!(f.strategic_plan_year && f.strategic_plan_year >= YEAR - 1);
+  const genderCompliant = femaleEcCount >= 2;
+  const champCompliant = !!f.national_championship_date;
+  const pass = [agmCompliant, finCompliant, stratCompliant, genderCompliant, champCompliant].filter(Boolean).length;
+  return { agmCompliant, finCompliant, stratCompliant, genderCompliant, champCompliant,
+           complianceScore: `${pass}/5`, compliancePct: Math.round((pass/5)*100) };
+}
+
+app.get('/api/compliance/overview', auth, (req, res) => {
+  const feds = db.prepare(`SELECT f.* FROM federations f ORDER BY f.name`).all();
+  const result = feds.map(f => {
+    const grade = fedGrade(f.affiliated_clubs, f.annual_turnover);
+    const femaleEcCount = db.prepare(
+      "SELECT COUNT(*) as c FROM ec_officers WHERE federation_id=? AND gender='F' AND status='active' AND is_disqualified=0"
+    ).get(f.id).c;
+    const checks = complianceChecks(f, femaleEcCount);
+    return { ...f, grade, femaleEcCount, ...checks };
+  });
+  res.json(result);
+});
+
+app.get('/api/federations/:id/ec-officers', auth, (req, res) => {
+  const officers = db.prepare('SELECT * FROM ec_officers WHERE federation_id=? ORDER BY CASE role WHEN \'President\' THEN 1 WHEN \'Secretary\' THEN 2 WHEN \'Treasurer\' THEN 3 ELSE 4 END, name').all(req.params.id);
+  const YEAR = 2025;
+  const enriched = officers.map(o => {
+    const yearsServed = YEAR - (o.appointed_year || YEAR);
+    const isKeyRole   = ['President','Secretary','Treasurer'].includes(o.role);
+    const limit       = isKeyRole ? 8 : 12;
+    const termStatus  = yearsServed >= limit ? 'exceeded' : yearsServed >= limit - 1 ? 'final-year' : 'ok';
+    return { ...o, yearsServed, termLimit: limit, termStatus };
+  });
+  res.json(enriched);
+});
+
+app.post('/api/federations/:id/ec-officers', auth, authWrite, (req, res) => {
+  const u = req.session.user;
+  if (u.role === 'coach') return res.status(403).json({ error: 'Coaches cannot manage EC officers.' });
+  if (u.role === 'federation' && u.federation_id !== Number(req.params.id))
+    return res.status(403).json({ error: 'You can only manage your own federation officers.' });
+  const { name, gender, role, appointed_year } = req.body;
+  const r = db.prepare('INSERT INTO ec_officers (federation_id,name,gender,role,appointed_year) VALUES (?,?,?,?,?)')
+    .run(Number(req.params.id), name, gender || 'M', role, Number(appointed_year) || new Date().getFullYear());
+  res.json({ ok: true, id: r.lastInsertRowid });
+});
+
+app.put('/api/federations/:id/ec-officers/:eid', auth, authWrite, (req, res) => {
+  const u = req.session.user;
+  if (u.role === 'coach') return res.status(403).json({ error: 'Coaches cannot manage EC officers.' });
+  if (u.role === 'federation' && u.federation_id !== Number(req.params.id))
+    return res.status(403).json({ error: 'You can only manage your own federation officers.' });
+  const { is_disqualified, disqualification_notes, status } = req.body;
+  db.prepare('UPDATE ec_officers SET is_disqualified=?,disqualification_notes=?,status=? WHERE id=? AND federation_id=?')
+    .run(is_disqualified ? 1 : 0, disqualification_notes || null, status || 'active', req.params.eid, req.params.id);
+  res.json({ ok: true });
+});
+
+app.put('/api/federations/:id/compliance', auth, authWrite, (req, res) => {
+  const u = req.session.user;
+  if (u.role === 'coach') return res.status(403).json({ error: 'Coaches cannot update compliance data.' });
+  if (u.role === 'federation' && u.federation_id !== Number(req.params.id))
+    return res.status(403).json({ error: 'You can only update your own federation compliance.' });
+  const { agm_last_date, financial_stmt_date, strategic_plan_year,
+          national_championship_date, affiliated_clubs, annual_turnover } = req.body;
+  db.prepare(`UPDATE federations SET agm_last_date=?,financial_stmt_date=?,strategic_plan_year=?,
+    national_championship_date=?,affiliated_clubs=?,annual_turnover=? WHERE id=?`)
+    .run(agm_last_date || null, financial_stmt_date || null,
+         Number(strategic_plan_year) || null, national_championship_date || null,
+         Number(affiliated_clubs) || 0, Number(annual_turnover) || 0, req.params.id);
+  res.json({ ok: true });
+});
+
+// ─── AI ENDPOINTS ────────────────────────────────────────────────────────────
+
+// Chatbot: natural language queries against live platform data
+app.post('/api/ai/chat', auth, async (req, res) => {
+  const { message, history = [] } = req.body;
+  if (!message) return res.status(400).json({ error: 'No message' });
+  if (!ai) return res.json({ reply: 'AI Assistant is not configured on this server. Please set the ANTHROPIC_API_KEY environment variable to enable this feature.' });
+
+  const u = req.session.user;
+
+  // Build live context snapshot from DB
+  const totalFeds   = db.prepare('SELECT COUNT(*) as c FROM federations').get().c;
+  const govStats    = db.prepare('SELECT COUNT(DISTINCT federation_id) as sub, ROUND(AVG(total_score),2) as avg FROM governance_scores WHERE year=2025').get();
+  const topFeds     = db.prepare('SELECT f.name, f.sport, g.total_score FROM governance_scores g JOIN federations f ON f.id=g.federation_id WHERE g.year=2025 ORDER BY g.total_score DESC LIMIT 5').all();
+  const bottomFeds  = db.prepare('SELECT f.name, f.sport, g.total_score FROM governance_scores g JOIN federations f ON f.id=g.federation_id WHERE g.year=2025 ORDER BY g.total_score ASC LIMIT 3').all();
+  const pending     = db.prepare('SELECT f.name FROM federations f WHERE f.id NOT IN (SELECT federation_id FROM governance_scores WHERE year=2025)').all();
+  const highRisk    = db.prepare(`SELECT p.name, p.sport, t.acwr FROM training_loads t JOIN participants p ON p.id=t.participant_id WHERE t.load_date=(SELECT MAX(load_date) FROM training_loads WHERE participant_id=t.participant_id) AND t.acwr>1.5 ORDER BY t.acwr DESC`).all();
+  const totalAth    = db.prepare("SELECT COUNT(*) as c FROM participants WHERE participant_type='athlete'").get().c;
+  const gradeA      = db.prepare('SELECT COUNT(*) as c FROM federations WHERE affiliated_clubs>=25 AND annual_turnover>=50000000').get().c;
+  const gradeB      = db.prepare('SELECT COUNT(*) as c FROM federations WHERE (affiliated_clubs>=15 AND annual_turnover>=10000000) AND NOT (affiliated_clubs>=25 AND annual_turnover>=50000000)').get().c;
+  const fullComp    = db.prepare(`SELECT COUNT(*) as c FROM federations WHERE agm_last_date IS NOT NULL AND strftime('%Y',agm_last_date)='2025' AND financial_stmt_date IS NOT NULL AND strftime('%Y',financial_stmt_date)='2025' AND strategic_plan_year>=2024 AND national_championship_date IS NOT NULL`).get().c;
+  const disqOfficers = db.prepare('SELECT e.name, e.role, f.name as fed FROM ec_officers e JOIN federations f ON f.id=e.federation_id WHERE e.is_disqualified=1').all();
+
+  const scopeNote = u.role === 'federation' || u.role === 'coach'
+    ? `Note: This user is scoped to federation ID ${u.federation_id}.`
+    : '';
+
+  const system = `You are SLSIE AI Assistant — the intelligent assistant embedded in the Sri Lanka Sports Intelligence Ecosystem platform for the National Olympic Committee of Sri Lanka (NOCSL).
+
+LIVE PLATFORM DATA (as of today):
+- Member Federations: ${totalFeds} | Grade A: ${gradeA} | Grade B: ${gradeB} | Grade C: ${totalFeds - gradeA - gradeB}
+- Governance 2025: ${govStats.sub}/${totalFeds} submitted | Avg score: ${govStats.avg}/5.0
+- Top federations: ${topFeds.map(f => f.name.replace('Sri Lanka ','SL ')+' ('+f.total_score.toFixed(1)+')').join(', ')}
+- Lowest governance: ${bottomFeds.map(f => f.name.replace('Sri Lanka ','SL ')+' ('+f.total_score.toFixed(1)+')').join(', ')}
+- Pending governance submissions: ${pending.length > 0 ? pending.map(f => f.name).join(', ') : 'None'}
+- Total athletes tracked: ${totalAth}
+- HIGH injury risk athletes (ACWR>1.5): ${highRisk.length > 0 ? highRisk.map(a => a.name+' ('+a.sport+', ACWR:'+a.acwr+')').join(', ') : 'None currently'}
+- Fully compliant federations (5/5 gazette): ${fullComp}/${totalFeds}
+- Disqualified EC officers: ${disqOfficers.length > 0 ? disqOfficers.map(o => o.name+' ('+o.role+', '+o.fed+')').join(', ') : 'None'}
+- Logged-in user: ${u.name} | Role: ${u.role}
+${scopeNote}
+
+Answer clearly and helpfully. Use specific numbers from the data. When listing multiple items (federations, athletes, scores, comparisons), present them as a markdown table with appropriate columns — for example | Federation | Score | Status |. For simple factual answers, 1–3 sentences is fine. If the question is outside the data available, say so clearly. Do not fabricate data.`;
+
+  // Include prior turns for context
+  const messages = [
+    ...history.slice(-6).map(h => ({ role: h.role, content: h.content })),
+    { role: 'user', content: message },
+  ];
+
+  if (!ai) return res.json({ reply: 'AI not configured.' });
+  try {
+    const r = await ai.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 700,
+      system,
+      messages,
+    });
+    res.json({ reply: r.content[0]?.text || 'No response.' });
+  } catch (e) {
+    console.error('Chat AI error:', e.message);
+    res.json({ reply: 'I encountered an error. Please try again.' });
+  }
+});
+
+// Athlete AI coaching insight
+app.get('/api/ai/athlete-insight/:id', auth, async (req, res) => {
+  if (!ai) return res.json({ insight: null });
+  const p = db.prepare('SELECT p.*, f.name as fed FROM participants p LEFT JOIN federations f ON f.id=p.federation_id WHERE p.id=?').get(req.params.id);
+  if (!p) return res.status(404).json({ error: 'Not found' });
+
+  const bio   = db.prepare('SELECT * FROM biometric_records WHERE participant_id=? ORDER BY record_date DESC LIMIT 1').get(req.params.id);
+  const loads = db.prepare('SELECT * FROM training_loads WHERE participant_id=? ORDER BY load_date DESC LIMIT 6').all(req.params.id);
+  const tests = db.prepare('SELECT * FROM performance_tests WHERE participant_id=? ORDER BY test_date DESC LIMIT 6').all(req.params.id);
+
+  const acwrTrend = loads.map(l => l.acwr).filter(Boolean);
+  const acwrDir   = acwrTrend.length >= 2 ? (acwrTrend[0] > acwrTrend[1] ? 'rising' : 'falling') : 'stable';
+
+  const prompt = `Athlete: ${p.name} | Sport: ${p.sport} | Age: ${2025 - p.birth_year} | Federation: ${p.fed}
+${bio ? `Latest biometrics (${bio.record_date}): Weight ${bio.weight_kg}kg, BMI ${bio.bmi}, Body fat ${bio.body_fat_pct}%, HR ${bio.heart_rate}bpm, Sleep ${bio.sleep_quality}/10, Stress ${bio.stress_level}/10, Mental wellbeing ${bio.mental_wellbeing}/10, Soreness ${bio.soreness}/10` : 'No biometric data.'}
+${loads.length ? `Training load (recent ${loads.length} sessions): ACWR trend ${acwrDir} — ${loads.slice(0,3).map(l=>`${l.load_date}: ACWR ${l.acwr} (ATL ${l.acute_load}, CTL ${l.chronic_load})`).join(' | ')}` : 'No training load data.'}
+${tests.length ? `Performance tests: ${tests.map(t=>`${t.test_type} ${t.result}${t.unit} (${t.test_date})`).join(' | ')}` : 'No performance test data.'}
+
+Write a structured coaching insight using exactly this format (each on its own line, separated by a blank line):
+
+**Key Finding:** [one sentence on the most important trend or risk]
+
+**Recommendation:** [one specific, actionable coaching recommendation]
+
+**Wellness Note:** [one sentence on sleep, stress, soreness, or mental wellbeing]
+
+Be direct and specific. Use numbers from the data.`;
+
+  const insight = await aiAsk('You are an elite sports science AI for NOCSL Sri Lanka. Analyse athlete data and provide concise, actionable coaching insights. Always use the exact structured format requested — each section on its own line separated by a blank line.', prompt, 320);
+  res.json({ insight });
+});
+
+// Federation AI governance & compliance insight
+app.get('/api/ai/federation-insight/:id', auth, async (req, res) => {
+  if (!ai) return res.json({ insight: null });
+  const f = db.prepare('SELECT * FROM federations WHERE id=?').get(req.params.id);
+  if (!f) return res.status(404).json({ error: 'Not found' });
+
+  const scores     = db.prepare('SELECT * FROM governance_scores WHERE federation_id=? ORDER BY year DESC LIMIT 2').all(req.params.id);
+  const officers   = db.prepare('SELECT * FROM ec_officers WHERE federation_id=?').all(req.params.id);
+  const femaleEc   = officers.filter(o => o.gender === 'F' && !o.is_disqualified && o.status === 'active').length;
+  const disq       = officers.filter(o => o.is_disqualified);
+  const termIssues = officers.filter(o => {
+    const yrs = 2025 - (o.appointed_year || 2025);
+    const lim = ['President','Secretary','Treasurer'].includes(o.role) ? 8 : 12;
+    return yrs >= lim && !o.is_disqualified && o.status === 'active';
+  });
+  const grade = fedGrade(f.affiliated_clubs, f.annual_turnover);
+  const s25   = scores.find(s => s.year === 2025);
+  const s24   = scores.find(s => s.year === 2024);
+  const yoyChange = s25 && s24 ? (s25.total_score - s24.total_score).toFixed(2) : null;
+
+  const compLine = [
+    f.agm_last_date && new Date(f.agm_last_date).getFullYear() >= 2025 ? null : 'AGM not held in 2025',
+    f.financial_stmt_date && new Date(f.financial_stmt_date).getFullYear() >= 2025 ? null : 'Financial statements not submitted',
+    f.strategic_plan_year && f.strategic_plan_year >= 2024 ? null : 'No current strategic plan',
+    femaleEc >= 2 ? null : `Gender quota not met (${femaleEc} female EC officers)`,
+    f.national_championship_date ? null : 'National championship not recorded',
+  ].filter(Boolean);
+
+  const prompt = `Federation: ${f.name} | Sport: ${f.sport} | Est. ${f.established_year} | Province: ${f.province} | Grade: ${grade}
+Clubs: ${f.affiliated_clubs} | Annual Turnover: Rs.${(f.annual_turnover/1000000).toFixed(1)}M
+${s25 ? `Governance 2025: ${s25.total_score.toFixed(2)}/5.0 (Board ${s25.board_composition}, Skills ${s25.director_skills}, Strategy ${s25.strategic_planning}, Finance ${s25.financial_transparency}, Integrity ${s25.integrity_risk}, Compliance ${s25.regulatory_compliance}, Culture ${s25.culture_score})` : 'No 2025 governance score submitted.'}
+${yoyChange ? `Year-on-year change: ${yoyChange > 0 ? '+' : ''}${yoyChange}` : ''}
+EC Officers: ${officers.length} total | ${femaleEc} female${disq.length ? ` | ${disq.length} disqualified (${disq.map(o=>o.name).join(', ')})` : ''}${termIssues.length ? ` | ${termIssues.length} at term limit` : ''}
+Compliance gaps: ${compLine.length === 0 ? 'Fully compliant (5/5)' : compLine.join('; ')}
+
+Write a structured governance analysis using exactly this format (each on its own line, separated by a blank line):
+
+**Strengths & Status:** [one sentence on the strongest governance dimension and overall score]
+
+**Critical Gap & Risk:** [one sentence on the most important compliance or governance weakness]
+
+**Priority Action for NOCSL:** [one specific, actionable recommendation with a measurable target]
+
+Be specific with numbers from the data.`;
+
+  const insight = await aiAsk('You are a sports governance AI analyst for the National Olympic Committee of Sri Lanka. Provide concise, factual, actionable governance analysis. Always use the exact structured format requested — each section on its own line separated by a blank line.', prompt, 350);
+  res.json({ insight });
+});
+
+// AI narrative for reports (called when generating HTML reports)
+async function getAiReportNarrative(type, data) {
+  if (!ai) return null;
+  let prompt = '';
+  if (type === 'governance') {
+    prompt = `${data.scores.length + data.pending.length} NSFs, ${data.scores.length} submitted, avg score ${data.avgScore}/5.0. Green (≥4.0): ${data.green}, Amber: ${data.amber}, Red (<3.0): ${data.red}. Pending: ${data.pending.length}. Top 3: ${data.scores.slice(0,3).map(s=>s.name+' '+s.total_score.toFixed(1)).join(', ')}. Bottom 3: ${data.scores.slice(-3).map(s=>s.name+' '+s.total_score.toFixed(1)).join(', ')}.`;
+  } else if (type === 'fitforlife') {
+    prompt = `${data.totalParticipants} participants across ${data.byProvince.length} provinces. Avg BMI ${data.avgBmi}, Sleep ${data.avgSleep}/10, Mental wellbeing ${data.avgMental}/10, Stress ${data.avgStress}/10. Activity: ${data.actStats.sessions} sessions, ${data.actStats.hours}h logged. Top sport: ${data.bySport[0]?.sport}.`;
+  } else if (type === 'injury-risk') {
+    prompt = `${data.totalAth} athletes monitored. HIGH risk (ACWR>1.5): ${data.highRisk.length} athletes — ${data.highRisk.slice(0,3).map(a=>a.name+'('+a.acwr.toFixed(2)+')').join(', ')}. Caution zone: ${data.cautionRisk.length}.`;
+  } else if (type === 'compliance') {
+    prompt = `34 federations. Grade A: ${data.gradeA}, Grade B: ${data.gradeB}, Grade C: ${data.gradeC}. Fully compliant (5/5): ${data.fullComp}. Compliance gaps: ${data.issues}. Key issues across federations: gender quota failures, missing financial statements, outdated strategic plans.`;
+  } else if (type === 'performance') {
+    prompt = `Athletics Sri Lanka performance trends. ${data.athletes.length} athletes, ${data.tests.length} test records across 3 cycles (Dec 2024–Apr 2025).`;
+  } else if (type === 'donor') {
+    prompt = `${data.totalAthletes} athletes in programme, ${data.byProvince.length} provinces. ${data.actStats.sessions} sessions, ${data.actStats.hours}h training. Avg BMI ${data.health.avg_bmi}, mental wellbeing ${data.health.avg_mental}/10. ${data.govStats.submitted} federations submitting governance reports, avg score ${data.govStats.avg}.`;
+  }
+  if (!prompt) return null;
+  return aiAsk(
+    'You are the AI narrative engine for SLSIE reports (National Olympic Committee of Sri Lanka). Write a single executive summary paragraph of 3–4 sentences based on the data provided. Be specific, professional, and highlight the most important insight.',
+    prompt, 200
+  );
+}
+
 // ─── REPORTS ─────────────────────────────────────────────────────────────────
 
 function getReportData(type) {
@@ -768,16 +1232,27 @@ function getReportData(type) {
       return { today, athletes, tests };
     }
     case 'compliance': {
-      const federations = db.prepare(`SELECT f.name, f.sport, f.established_year, f.province, f.total_members,
-        COALESCE(g.total_score, NULL) as total_score,
-        COALESCE(g.regulatory_compliance, NULL) as reg_comp,
-        CASE WHEN g.total_score IS NULL THEN 'Pending' WHEN g.total_score >= 3.0 THEN 'Compliant' ELSE 'Non-Compliant' END as status
-        FROM federations f LEFT JOIN governance_scores g ON g.federation_id=f.id AND g.year=2025
-        ORDER BY status, g.total_score DESC`).all();
-      const compliant = federations.filter(f => f.status === 'Compliant').length;
-      const nonCompliant = federations.filter(f => f.status === 'Non-Compliant').length;
-      const pending = federations.filter(f => f.status === 'Pending').length;
-      return { today, federations, compliant, nonCompliant, pending };
+      const feds = db.prepare(`SELECT f.* FROM federations f ORDER BY f.name`).all();
+      const YEAR = 2025;
+      const federations = feds.map(f => {
+        const grade = fedGrade(f.affiliated_clubs, f.annual_turnover);
+        const femaleEcCount = db.prepare(
+          "SELECT COUNT(*) as c FROM ec_officers WHERE federation_id=? AND gender='F' AND status='active' AND is_disqualified=0"
+        ).get(f.id).c;
+        const totalOfficers = db.prepare('SELECT COUNT(*) as c FROM ec_officers WHERE federation_id=? AND status=\'active\'').get(f.id).c;
+        const disqualified  = db.prepare('SELECT COUNT(*) as c FROM ec_officers WHERE federation_id=? AND is_disqualified=1').get(f.id).c;
+        const termIssues    = db.prepare(
+          "SELECT COUNT(*) as c FROM ec_officers WHERE federation_id=? AND status='active' AND is_disqualified=0 AND ((role IN ('President','Secretary','Treasurer') AND (? - appointed_year) >= 8) OR (role NOT IN ('President','Secretary','Treasurer') AND (? - appointed_year) >= 12))"
+        ).get(f.id, YEAR, YEAR).c;
+        const checks = complianceChecks(f, femaleEcCount);
+        return { ...f, grade, femaleEcCount, totalOfficers, disqualified, termIssues, ...checks };
+      });
+      const gradeA  = federations.filter(f => f.grade === 'A').length;
+      const gradeB  = federations.filter(f => f.grade === 'B').length;
+      const gradeC  = federations.filter(f => f.grade === 'C').length;
+      const fullComp = federations.filter(f => f.complianceScore === '5/5').length;
+      const issues  = federations.filter(f => f.complianceScore !== '5/5').length;
+      return { today, federations, gradeA, gradeB, gradeC, fullComp, issues };
     }
     case 'donor': {
       const totalAthletes = db.prepare('SELECT COUNT(*) as c FROM participants').get().c;
@@ -841,8 +1316,17 @@ tbody tr:nth-child(even) td{background:#f8faff}
 </head><body>${bodyHtml}</body></html>`;
 }
 
-function generateHtmlReport(type, data) {
+function generateHtmlReport(type, data, aiNarrative = null) {
   const title = REPORT_TITLES[type] || 'Report';
+  const aiBox = aiNarrative
+    ? `<div style="background:linear-gradient(135deg,#eff6ff,#f0fdf4);border:1.5px solid #bfdbfe;border-radius:10px;padding:16px 20px;margin:0 0 24px;display:flex;gap:14px;align-items:flex-start">
+        <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#1d4ed8,#15803d);display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#fff;font-size:14px">✦</div>
+        <div>
+          <div style="font-size:8pt;font-weight:700;color:#1d4ed8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">AI Executive Summary — SLSIE Intelligence Engine</div>
+          <p style="margin:0;color:#1e3a5f;line-height:1.65;font-size:10pt">${aiNarrative}</p>
+        </div>
+      </div>`
+    : '';
   let body = '';
 
   if (type === 'governance') {
@@ -1005,34 +1489,79 @@ function generateHtmlReport(type, data) {
   }
 
   else if (type === 'compliance') {
-    const { today, federations, compliant, nonCompliant, pending } = data;
-    const badge = s => `<span class="badge ${s==='Compliant'?'g':s==='Non-Compliant'?'r':'gr'}">${s}</span>`;
+    const { today, federations, gradeA, gradeB, gradeC, fullComp, issues } = data;
+    const tick = v => v ? '✔' : '✘';
+    const gb = g => g === 'A' ? '<span class="badge" style="background:#1d4ed8;color:#fff">A</span>'
+                  : g === 'B' ? '<span class="badge" style="background:#b45309;color:#fff">B</span>'
+                              : '<span class="badge" style="background:#64748b;color:#fff">C</span>';
+    const scoreBadge = s => {
+      const [p] = s.split('/').map(Number);
+      const cls = p === 5 ? 'g' : p >= 3 ? 'a' : 'r';
+      return `<span class="badge ${cls}">${s}</span>`;
+    };
+    const alertRows = federations.filter(f => !f.agmCompliant || !f.finCompliant || !f.stratCompliant || !f.genderCompliant || !f.champCompliant || f.disqualified > 0 || f.termIssues > 0);
     body = `
 <div class="cover">
   <div class="cover-org">National Olympic Committee of Sri Lanka · SLSIE v1.0</div>
   <div class="cover-title">${title}</div>
-  <div class="cover-sub">Regulatory compliance status against National Sports Associations Regulations No. 01 of 2025</div>
+  <div class="cover-sub">Federation grading and statutory compliance per National Sports Associations Regulations No. 01 of 2025 (Gazette No. 2437/24)</div>
   <div class="cover-meta">Generated: ${today} &nbsp;|&nbsp; Reporting Year: 2025 &nbsp;|&nbsp; Classification: Official Use Only</div>
 </div>
 <div class="wrap">
-  <h2>Compliance Overview</h2>
+  <h2>Executive Summary</h2>
+  <p>This report assesses all 34 National Sports Federations (NSFs) affiliated to the National Olympic Committee of Sri Lanka (NOCSL) against the five statutory compliance requirements of the National Sports Associations Regulations No. 01 of 2025, and classifies each federation into Grade A, B, or C based on affiliated clubs and annual turnover.</p>
   <div class="kpi-row">
     <div class="kpi"><div class="v">${federations.length}</div><div class="l">Total Federations</div></div>
-    <div class="kpi green"><div class="v">${compliant}</div><div class="l">Compliant</div></div>
-    <div class="kpi red"><div class="v">${nonCompliant}</div><div class="l">Non-Compliant</div></div>
-    <div class="kpi amber"><div class="v">${pending}</div><div class="l">Pending Review</div></div>
+    <div class="kpi" style="background:#dbeafe;border-color:#bfdbfe"><div class="v" style="color:#1d4ed8">${gradeA}</div><div class="l">Grade A</div></div>
+    <div class="kpi amber"><div class="v">${gradeB}</div><div class="l">Grade B</div></div>
+    <div class="kpi"><div class="v" style="color:#64748b">${gradeC}</div><div class="l">Grade C</div></div>
+    <div class="kpi green"><div class="v">${fullComp}</div><div class="l">Fully Compliant (5/5)</div></div>
+    <div class="kpi red"><div class="v">${issues}</div><div class="l">Compliance Gaps</div></div>
   </div>
-  <h2>Federation Compliance Status</h2>
+  <h3>Federation Grading Criteria (Gazette Schedule 1)</h3>
   <table>
-    <thead><tr><th>Federation</th><th>Sport</th><th>Est.</th><th>Province</th><th>Members</th><th>Gov. Score</th><th>Reg. Compliance</th><th>Status</th></tr></thead>
-    <tbody>${federations.map(f=>`<tr>
-      <td>${f.name}</td><td>${f.sport}</td><td>${f.established_year}</td><td>${f.province}</td><td>${f.total_members.toLocaleString()}</td>
-      <td>${f.total_score ? f.total_score.toFixed(2) : '—'}</td>
-      <td>${f.reg_comp ? f.reg_comp.toFixed(1) : '—'}</td>
-      <td>${badge(f.status)}</td>
+    <thead><tr><th>Grade</th><th>Affiliated Clubs / District Assoc.</th><th>Annual Turnover (LKR)</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Grade A</strong></td><td>25 or more</td><td>Rs. 50 million or above</td></tr>
+      <tr><td><strong>Grade B</strong></td><td>15 or more</td><td>Rs. 10 million or above</td></tr>
+      <tr><td><strong>Grade C</strong></td><td>Below 15</td><td>Below Rs. 10 million</td></tr>
+    </tbody>
+  </table>
+  ${alertRows.length ? `
+  <h2>⚠ Compliance Alerts — ${alertRows.length} Federations Require Action</h2>
+  <table>
+    <thead><tr><th>Federation</th><th>Grade</th><th>Issue(s) Identified</th></tr></thead>
+    <tbody>${alertRows.map(f => {
+      const issues = [];
+      if (!f.agmCompliant)    issues.push('AGM not recorded for 2025');
+      if (!f.finCompliant)    issues.push('Financial statements not submitted for 2025');
+      if (!f.stratCompliant)  issues.push('No current strategic plan on record');
+      if (!f.genderCompliant) issues.push(`Gender quota not met (${f.femaleEcCount} female EC officer${f.femaleEcCount!==1?'s':''})`);
+      if (!f.champCompliant)  issues.push('National championship not recorded for 2025');
+      if (f.disqualified > 0) issues.push(`${f.disqualified} disqualified officer(s) on register`);
+      if (f.termIssues > 0)   issues.push(`${f.termIssues} officer(s) exceeding term limit`);
+      return `<tr><td><strong>${f.name}</strong></td><td>${gb(f.grade)}</td><td style="color:#b91c1c">${issues.join('; ')}</td></tr>`;
+    }).join('')}</tbody>
+  </table>` : ''}
+  <h2>Full Compliance Matrix</h2>
+  <table>
+    <thead><tr><th>Federation</th><th>Sport</th><th>Grade</th><th>Clubs</th><th>Turnover</th><th>AGM</th><th>Fin. Stmt</th><th>Strat. Plan</th><th>Gender ≥2F</th><th>Nat. Champ.</th><th>EC Officers</th><th>Score</th></tr></thead>
+    <tbody>${federations.map(f => `<tr>
+      <td><strong>${f.name}</strong></td>
+      <td>${f.sport}</td>
+      <td>${gb(f.grade)}</td>
+      <td>${f.affiliated_clubs || '—'}</td>
+      <td>${f.annual_turnover ? 'Rs.'+((f.annual_turnover/1000000).toFixed(1))+'M' : '—'}</td>
+      <td style="color:${f.agmCompliant?'#15803d':'#b91c1c'};font-weight:700">${tick(f.agmCompliant)}</td>
+      <td style="color:${f.finCompliant?'#15803d':'#b91c1c'};font-weight:700">${tick(f.finCompliant)}</td>
+      <td style="color:${f.stratCompliant?'#15803d':'#b91c1c'};font-weight:700">${tick(f.stratCompliant)}</td>
+      <td style="color:${f.genderCompliant?'#15803d':'#b91c1c'};font-weight:700">${tick(f.genderCompliant)} ${f.femaleEcCount>0?'('+f.femaleEcCount+'F)':''}</td>
+      <td style="color:${f.champCompliant?'#15803d':'#b91c1c'};font-weight:700">${tick(f.champCompliant)}</td>
+      <td style="font-size:8.5pt">${f.totalOfficers} total${f.disqualified?', <span style="color:#b91c1c">'+f.disqualified+' disq.</span>':''}${f.termIssues?' <span style="color:#b45309">'+f.termIssues+' term</span>':''}</td>
+      <td>${scoreBadge(f.complianceScore)}</td>
     </tr>`).join('')}</tbody>
   </table>
-  <div class="note"><strong>Compliance Criterion:</strong> A federation is deemed compliant if its Governance Benchmarking total score is ≥ 3.0 / 5.0 as per NOCSL Circular 2025-04. Pending status indicates that the federation has not yet submitted its 2025 governance assessment.</div>
+  <div class="note"><strong>Compliance Requirements (Gazette No. 2437/24):</strong> (1) Annual General Meeting held in the reporting year; (2) Audited financial statements submitted within 2 months of year-end; (3) Strategic plan for the current or preceding year in force; (4) Minimum 2 female members on the Executive Committee where female athletes participate; (5) National championship conducted in the reporting year.</div>
   <div class="footer"><span>SLSIE — Sri Lanka Sports Intelligence Ecosystem</span><span>Official · For Ministry of Sports and NOCSL</span><span>© 2025 Everpower Software Solutions</span></div>
 </div>`;
   }
@@ -1078,7 +1607,9 @@ function generateHtmlReport(type, data) {
 </div>`;
   }
 
-  return reportHtmlPage(title, body);
+  // Inject AI narrative box after the first <div class="wrap"> opening
+  const bodyWithAi = aiBox ? body.replace('<div class="wrap">', `<div class="wrap">${aiBox}`) : body;
+  return reportHtmlPage(title, bodyWithAi);
 }
 
 async function generateWordDoc(type, data) {
@@ -1238,20 +1769,66 @@ async function generateWordDoc(type, data) {
   }
 
   else if (type === 'compliance') {
-    const { federations, compliant, nonCompliant, pending } = data;
-    children.push(h1('Federation Compliance Report'));
-    children.push(para(`Regulatory compliance status against National Sports Associations Regulations No. 01 of 2025. Compliant: ${compliant}  |  Non-Compliant: ${nonCompliant}  |  Pending: ${pending}`));
-    const fc = [2400, 1200, 600, 1200, 800, 800, 900, 1200];
-    children.push(new Table({ width: { size: 9100, type: WidthType.DXA }, columnWidths: fc, rows: [
-      new TableRow({ tableHeader: true, children: ['Federation','Sport','Est.','Province','Members','Gov. Score','Reg. Comp.','Status'].map((h,i)=>hdrCell(h,fc[i])) }),
+    const { federations, gradeA, gradeB, gradeC, fullComp, issues } = data;
+    const tick = v => v ? '✔' : '✘';
+    children.push(h1('Federation Compliance Report 2025'));
+    children.push(para(`Assessment of all 34 NSFs against the National Sports Associations Regulations No. 01 of 2025 (Gazette No. 2437/24). Grade A: ${gradeA}  |  Grade B: ${gradeB}  |  Grade C: ${gradeC}  |  Fully Compliant (5/5): ${fullComp}  |  Compliance Gaps: ${issues}`));
+
+    // Grading criteria table
+    children.push(h2('Federation Grading Criteria (Gazette Schedule 1)'));
+    const gc = [2000, 3500, 3500];
+    children.push(new Table({ width: { size: 9000, type: WidthType.DXA }, columnWidths: gc, rows: [
+      new TableRow({ tableHeader: true, children: ['Grade','Affiliated Clubs / District Assoc.','Annual Turnover (LKR)'].map((h,i)=>hdrCell(h,gc[i])) }),
+      new TableRow({ children: [dataCell('Grade A',gc[0],{bold:true}), dataCell('25 or more',gc[1]), dataCell('Rs. 50 million or above',gc[2])] }),
+      new TableRow({ children: [dataCell('Grade B',gc[1],{bold:true}), dataCell('15 or more',gc[1]), dataCell('Rs. 10 million or above',gc[2])] }),
+      new TableRow({ children: [dataCell('Grade C',gc[2],{bold:true}), dataCell('Below 15',gc[1]), dataCell('Below Rs. 10 million',gc[2])] }),
+    ]}));
+
+    // Alert table — only federations with issues
+    const alertFeds = federations.filter(f => f.complianceScore !== '5/5' || f.disqualified > 0 || f.termIssues > 0);
+    if (alertFeds.length) {
+      children.push(h1(`Compliance Alerts — ${alertFeds.length} Federations`));
+      const ac = [2800, 800, 5400];
+      children.push(new Table({ width: { size: 9000, type: WidthType.DXA }, columnWidths: ac, rows: [
+        new TableRow({ tableHeader: true, children: ['Federation','Grade','Issues Identified'].map((h,i)=>hdrCell(h,ac[i])) }),
+        ...alertFeds.map(f => {
+          const issueList = [];
+          if (!f.agmCompliant)    issueList.push('AGM not recorded for 2025');
+          if (!f.finCompliant)    issueList.push('Financial statements not submitted');
+          if (!f.stratCompliant)  issueList.push('No current strategic plan');
+          if (!f.genderCompliant) issueList.push(`Gender quota not met (${f.femaleEcCount}F)`);
+          if (!f.champCompliant)  issueList.push('National championship not recorded');
+          if (f.disqualified > 0) issueList.push(`${f.disqualified} disqualified officer(s)`);
+          if (f.termIssues > 0)   issueList.push(`${f.termIssues} officer(s) exceeding term limit`);
+          return new TableRow({ children: [
+            dataCell(f.name, ac[0], {bold:true}),
+            dataCell(f.grade, ac[1], {bold:true, color: f.grade==='A'?'1D4ED8':f.grade==='B'?'B45309':'64748B'}),
+            dataCell(issueList.join('; '), ac[2], {color:'B91C1C'}),
+          ]});
+        })
+      ]}));
+    }
+
+    // Full compliance matrix
+    children.push(h1('Full Compliance Matrix'));
+    const fc = [2000, 1000, 600, 700, 900, 650, 650, 650, 650, 650, 850];
+    children.push(new Table({ width: { size: 9300, type: WidthType.DXA }, columnWidths: fc, rows: [
+      new TableRow({ tableHeader: true, children: ['Federation','Sport','Grade','Clubs','Turnover','AGM','Fin.Stmt','Strategy','Gender','Champ.','Score'].map((h,i)=>hdrCell(h,fc[i])) }),
       ...federations.map(f => new TableRow({ children: [
-        dataCell(f.name,fc[0]), dataCell(f.sport,fc[1]), dataCell(f.established_year,fc[2]), dataCell(f.province,fc[3]),
-        dataCell(f.total_members?.toLocaleString(),fc[4]),
-        dataCell(f.total_score ? f.total_score.toFixed(2) : '—',fc[5]),
-        dataCell(f.reg_comp ? f.reg_comp.toFixed(1) : '—',fc[6]),
-        dataCell(f.status,fc[7], { bold:true, color: f.status==='Compliant'?'15803D':f.status==='Non-Compliant'?'B91C1C':'888888' })
+        dataCell(f.name, fc[0], {bold:true}),
+        dataCell(f.sport, fc[1]),
+        dataCell(f.grade, fc[2], {bold:true, color: f.grade==='A'?'1D4ED8':f.grade==='B'?'B45309':'64748B'}),
+        dataCell(f.affiliated_clubs||'—', fc[3]),
+        dataCell(f.annual_turnover ? 'Rs.'+(f.annual_turnover/1000000).toFixed(1)+'M' : '—', fc[4]),
+        dataCell(tick(f.agmCompliant),    fc[5], {bold:true, color: f.agmCompliant   ?'15803D':'B91C1C'}),
+        dataCell(tick(f.finCompliant),    fc[6], {bold:true, color: f.finCompliant   ?'15803D':'B91C1C'}),
+        dataCell(tick(f.stratCompliant),  fc[7], {bold:true, color: f.stratCompliant ?'15803D':'B91C1C'}),
+        dataCell(tick(f.genderCompliant), fc[8], {bold:true, color: f.genderCompliant?'15803D':'B91C1C'}),
+        dataCell(tick(f.champCompliant),  fc[9], {bold:true, color: f.champCompliant ?'15803D':'B91C1C'}),
+        dataCell(f.complianceScore, fc[10], {bold:true, color: f.complianceScore==='5/5'?'15803D':parseInt(f.complianceScore)>=3?'B45309':'B91C1C'}),
       ]}))
     ]}));
+    children.push(para('Compliance Requirements: (1) Annual General Meeting in 2025; (2) Audited financial statements for 2025; (3) Current strategic plan; (4) ≥2 female EC members; (5) National championship conducted in 2025.'));
   }
 
   else if (type === 'donor') {
@@ -1289,12 +1866,13 @@ async function generateWordDoc(type, data) {
   return Packer.toBuffer(doc);
 }
 
-app.get('/reports/html/:type', auth, (req, res) => {
+app.get('/reports/html/:type', auth, async (req, res) => {
   const type = req.params.type;
   if (!REPORT_TITLES[type]) return res.status(404).send('Unknown report type');
   try {
     const data = getReportData(type);
-    const html = generateHtmlReport(type, data);
+    const narrative = await getAiReportNarrative(type, data);
+    const html = generateHtmlReport(type, data, narrative);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(html);
   } catch (err) {

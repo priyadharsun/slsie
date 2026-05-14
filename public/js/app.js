@@ -6,11 +6,11 @@ const charts = {};
 
 // Role capability matrix
 const ROLE_CAPS = {
-  admin:      { canWrite: true,  canGovSubmit: true,  ownOnly: false, nav: ['dashboard','federations','governance','athletes','fitforlife','reports','settings'], reportKeys: null },
-  federation: { canWrite: true,  canGovSubmit: true,  ownOnly: true,  nav: ['dashboard','federations','governance','athletes','fitforlife','reports'],            reportKeys: ['governance','fitforlife','injury-risk','performance','compliance'] },
-  coach:      { canWrite: true,  canGovSubmit: false, ownOnly: true,  nav: ['dashboard','federations','athletes','fitforlife'],                                   reportKeys: [] },
-  ministry:   { canWrite: false, canGovSubmit: false, ownOnly: false, nav: ['dashboard','federations','governance','athletes','fitforlife','reports'],            reportKeys: null },
-  donor:      { canWrite: false, canGovSubmit: false, ownOnly: false, nav: ['dashboard','fitforlife','reports'],                                                   reportKeys: ['donor'] },
+  admin:      { canWrite: true,  canGovSubmit: true,  ownOnly: false, nav: ['dashboard','federations','governance','compliance','athletes','fitforlife','reports','settings'], reportKeys: null },
+  federation: { canWrite: true,  canGovSubmit: true,  ownOnly: true,  nav: ['dashboard','federations','governance','compliance','athletes','fitforlife','reports'],            reportKeys: ['governance','fitforlife','injury-risk','performance','compliance'] },
+  coach:      { canWrite: true,  canGovSubmit: false, ownOnly: true,  nav: ['dashboard','federations','athletes','fitforlife'],                                              reportKeys: [] },
+  ministry:   { canWrite: false, canGovSubmit: false, ownOnly: false, nav: ['dashboard','federations','governance','compliance','athletes','fitforlife','reports'],           reportKeys: null },
+  donor:      { canWrite: false, canGovSubmit: false, ownOnly: false, nav: ['dashboard','fitforlife','reports'],                                                              reportKeys: ['donor'] },
 };
 const ROLE_LABELS = { admin:'NOCSL Admin', federation:'Federation Officer', coach:'Head Coach', ministry:'Ministry Official', donor:'Donor / Partner' };
 const ROLE_COLORS = { admin:'#1F4E79', federation:'#15803d', coach:'#7e22ce', ministry:'#b45309', donor:'#0f766e' };
@@ -46,12 +46,28 @@ function acwrZoneHtml(v) {
   if (v > 1.3) return `<span class="acwr-zone" style="background:#fef3c7;color:#b45309">⚡ CAUTION</span>`;
   return `<span class="acwr-zone" style="background:#dcfce7;color:#15803d">✓ OPTIMAL</span>`;
 }
+function gradeBadge(g) {
+  const map = { A:'grade-a', B:'grade-b', C:'grade-c' };
+  return `<span class="grade-badge ${map[g]||'grade-c'}">${g||'C'}</span>`;
+}
+function compCheck(val, label = '') {
+  return val
+    ? `<span class="comp-pass" title="${label}"><i class="bi bi-check-circle-fill"></i></span>`
+    : `<span class="comp-fail" title="${label}"><i class="bi bi-x-circle-fill"></i></span>`;
+}
+function fmtLKR(v) {
+  if (!v) return '—';
+  if (v >= 1000000) return `Rs.${(v/1000000).toFixed(1)}M`;
+  if (v >= 1000)    return `Rs.${(v/1000).toFixed(0)}K`;
+  return `Rs.${v}`;
+}
 
 // ── ROUTING ───────────────────────────────────────────────────────────────────
 const routes = {
   '/dashboard':   renderDashboard,
   '/federations': renderFederations,
   '/governance':  renderGovernance,
+  '/compliance':  renderCompliance,
   '/athletes':    renderAthletes,
   '/fitforlife':  renderFitForLife,
   '/reports':     renderReports,
@@ -112,7 +128,7 @@ function navigate() {
     a.classList.toggle('active', a.dataset.view === base);
   });
   // Breadcrumb
-  const names = { dashboard:'Dashboard', federations:'Federations', governance:'Governance Benchmark', athletes:'Athletes', fitforlife:'Fit for Life', reports:'Reports', settings:'Settings' };
+  const names = { dashboard:'Dashboard', federations:'Federations', governance:'Governance Benchmark', compliance:'Compliance & Gazette', athletes:'Athletes', fitforlife:'Fit for Life', reports:'Reports', settings:'Settings' };
   document.getElementById('breadcrumb').innerHTML = `<li class="breadcrumb-item active">${names[base] || base}</li>`;
 }
 
@@ -478,7 +494,10 @@ async function renderFederations() {
 // ── FEDERATION DETAIL ──────────────────────────────────────────────────────────
 async function renderFederationDetail(id) {
   loading();
-  const f = await api(`/api/federations/${id}`);
+  const [f, ecOfficers] = await Promise.all([
+    api(`/api/federations/${id}`),
+    api(`/api/federations/${id}/ec-officers`),
+  ]);
   if (!f) return;
 
   document.getElementById('breadcrumb').innerHTML = `
@@ -488,6 +507,18 @@ async function renderFederationDetail(id) {
   window._currentFedId = f.id;
   const score2025 = f.scores.find(s => s.year === 2025);
   const score2024 = f.scores.find(s => s.year === 2024);
+
+  // Gazette-derived grade & compliance
+  const grade = (clubs, turnover) => clubs >= 25 && turnover >= 50000000 ? 'A' : clubs >= 15 && turnover >= 10000000 ? 'B' : 'C';
+  const fedGradeVal = grade(f.affiliated_clubs || 0, f.annual_turnover || 0);
+  const YEAR = 2025;
+  const femaleEc = (ecOfficers || []).filter(o => o.gender === 'F' && !o.is_disqualified && o.status === 'active').length;
+  const agmOk    = !!(f.agm_last_date     && new Date(f.agm_last_date).getFullYear()     >= YEAR);
+  const finOk    = !!(f.financial_stmt_date && new Date(f.financial_stmt_date).getFullYear() >= YEAR);
+  const stratOk  = !!(f.strategic_plan_year && f.strategic_plan_year >= YEAR - 1);
+  const genderOk = femaleEc >= 2;
+  const champOk  = !!f.national_championship_date;
+  const compPass = [agmOk, finOk, stratOk, genderOk, champOk].filter(Boolean).length;
   const dims = [
     ['Board Composition & Independence', 'board_composition'],
     ['Director Skills & Tenure',         'director_skills'],
@@ -516,6 +547,11 @@ async function renderFederationDetail(id) {
       <div style="flex:1">
         <div class="fed-name">${f.name}</div>
         <div class="fed-meta">${f.sport} · Est. ${f.established_year} · ${f.province}</div>
+        <div class="mt-2 d-flex align-items-center gap-2 flex-wrap">
+          ${gradeBadge(fedGradeVal)}
+          <span style="color:rgba(255,255,255,.65);font-size:.72rem">${f.affiliated_clubs ? f.affiliated_clubs+' clubs' : ''} ${f.annual_turnover ? '· '+fmtLKR(f.annual_turnover) : ''}</span>
+          <span style="color:rgba(255,255,255,.65);font-size:.72rem">· Compliance ${compPass}/5</span>
+        </div>
       </div>
       <div class="text-end">
         ${score2025 ? scoreBadge(score2025.total_score) : scoreBadge(null)}
@@ -606,6 +642,103 @@ async function renderFederationDetail(id) {
         </table>
       </div>
     </div>
+
+    <!-- Gazette Compliance -->
+    <div class="row g-3 mb-3">
+      <div class="col-md-5">
+        <div class="panel h-100">
+          <div class="panel-header">
+            <span class="panel-title">Statutory Compliance Checklist</span>
+            <div class="d-flex align-items-center gap-2">
+              <div class="comp-score-pill ${compPass===5?'comp-full':compPass>=3?'comp-mid':'comp-low'}" style="font-size:.75rem">${compPass}/5</div>
+              ${canWrite() && isOwnFed(f.id) && currentUser.role !== 'coach' ? `<button class="btn-action btn-sm-action" style="background:none;border:1px solid #e2e8f0;color:#374151;font-size:.75rem" onclick="openComplianceForm(${f.id})"><i class="bi bi-pencil"></i> Update</button>` : ''}
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="comp-check-list">
+              <div class="comp-check-item">
+                <span class="${agmOk?'comp-pass':'comp-fail'}"><i class="bi bi-${agmOk?'check':'x'}-circle-fill"></i></span>
+                <div>
+                  <div class="fw-semibold" style="font-size:.82rem">Annual General Meeting</div>
+                  <div class="text-muted" style="font-size:.76rem">${f.agm_last_date ? 'Held: '+fmtDate(f.agm_last_date) : 'Not recorded for 2025'}</div>
+                </div>
+              </div>
+              <div class="comp-check-item">
+                <span class="${finOk?'comp-pass':'comp-fail'}"><i class="bi bi-${finOk?'check':'x'}-circle-fill"></i></span>
+                <div>
+                  <div class="fw-semibold" style="font-size:.82rem">Audited Financial Statements</div>
+                  <div class="text-muted" style="font-size:.76rem">${f.financial_stmt_date ? 'Submitted: '+fmtDate(f.financial_stmt_date) : 'Not submitted for 2025'}</div>
+                </div>
+              </div>
+              <div class="comp-check-item">
+                <span class="${stratOk?'comp-pass':'comp-fail'}"><i class="bi bi-${stratOk?'check':'x'}-circle-fill"></i></span>
+                <div>
+                  <div class="fw-semibold" style="font-size:.82rem">Strategic Plan</div>
+                  <div class="text-muted" style="font-size:.76rem">${f.strategic_plan_year ? 'Plan '+f.strategic_plan_year+' in force' : 'No current plan on record'}</div>
+                </div>
+              </div>
+              <div class="comp-check-item">
+                <span class="${genderOk?'comp-pass':'comp-fail'}"><i class="bi bi-${genderOk?'check':'x'}-circle-fill"></i></span>
+                <div>
+                  <div class="fw-semibold" style="font-size:.82rem">Gender Quota (≥2 female EC members)</div>
+                  <div class="text-muted" style="font-size:.76rem">${femaleEc} female EC officer${femaleEc!==1?'s':''} on register${!genderOk?' — below minimum of 2':''}</div>
+                </div>
+              </div>
+              <div class="comp-check-item">
+                <span class="${champOk?'comp-pass':'comp-fail'}"><i class="bi bi-${champOk?'check':'x'}-circle-fill"></i></span>
+                <div>
+                  <div class="fw-semibold" style="font-size:.82rem">National Championship</div>
+                  <div class="text-muted" style="font-size:.76rem">${f.national_championship_date ? 'Held: '+fmtDate(f.national_championship_date) : 'Not recorded for 2025'}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-7">
+        <div class="panel h-100">
+          <div class="panel-header">
+            <span class="panel-title">EC Officer Register</span>
+            <div class="d-flex align-items-center gap-2">
+              <span class="text-muted" style="font-size:.76rem">${(ecOfficers||[]).length} officer${(ecOfficers||[]).length!==1?'s':''} · ${femaleEc} female</span>
+              ${canWrite() && isOwnFed(f.id) && currentUser.role !== 'coach' ? `<button class="btn-action btn-sm-action" style="background:none;border:1px solid #e2e8f0;color:#374151;font-size:.75rem" onclick="openEcOfficerForm(${f.id})"><i class="bi bi-person-plus"></i> Add Officer</button>` : ''}
+            </div>
+          </div>
+          <div style="overflow-x:auto">
+            <table class="data-table">
+              <thead><tr><th>Name</th><th>Role</th><th>Gender</th><th>Since</th><th>Years</th><th>Term</th><th>Status</th></tr></thead>
+              <tbody>
+                ${(ecOfficers||[]).length ? (ecOfficers||[]).map(o => {
+                  const termCls = o.termStatus === 'exceeded' ? 'score-red' : o.termStatus === 'final-year' ? 'score-amber' : 'score-green';
+                  const termIcon = o.termStatus === 'exceeded' ? 'bi-x-circle-fill' : o.termStatus === 'final-year' ? 'bi-exclamation-circle-fill' : 'bi-check-circle-fill';
+                  return `<tr ${o.is_disqualified ? 'style="opacity:.55"' : ''}>
+                    <td><strong>${o.name}</strong>${o.is_disqualified ? ' <span class="comp-alert-pill" style="font-size:.7rem">Disqualified</span>' : ''}</td>
+                    <td><span class="province-pill">${o.role}</span></td>
+                    <td>${o.gender === 'F' ? '<span style="color:#9d174d">F</span>' : '<span style="color:#1d4ed8">M</span>'}</td>
+                    <td class="text-muted" style="font-size:.8rem">${o.appointed_year || '—'}</td>
+                    <td class="text-muted" style="font-size:.8rem">${o.yearsServed}yr</td>
+                    <td><span class="score-badge ${termCls}"><i class="bi ${termIcon}"></i>${o.yearsServed}/${o.termLimit}yr</span></td>
+                    <td><span class="score-badge ${o.is_disqualified ? 'score-red' : o.status==='inactive'?'score-grey':'score-green'}">${o.is_disqualified ? 'Disqualified' : o.status === 'inactive' ? 'Inactive' : 'Active'}</span></td>
+                  </tr>`;
+                }).join('') : '<tr><td colspan="7" class="text-center text-muted py-4">No EC officers recorded. Click Add Officer to start.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+          ${(ecOfficers||[]).some(o=>o.is_disqualified) ? `
+          <div style="background:#fef2f2;border-top:1px solid #fecaca;padding:10px 16px;font-size:.78rem;color:#991b1b">
+            <i class="bi bi-exclamation-triangle-fill me-1"></i>
+            <strong>Disqualification Notice:</strong> ${(ecOfficers||[]).filter(o=>o.is_disqualified).map(o=>`${o.name} (${o.role}) — ${o.disqualification_notes}`).join('; ')}
+          </div>` : ''}
+          ${(ecOfficers||[]).some(o=>o.termStatus==='exceeded') ? `
+          <div style="background:#fefce8;border-top:1px solid #fde68a;padding:10px 16px;font-size:.78rem;color:#92400e">
+            <i class="bi bi-clock-history me-1"></i>
+            <strong>Term Limit Alert:</strong> ${(ecOfficers||[]).filter(o=>o.termStatus==='exceeded').map(o=>`${o.name} (${o.role}) — ${o.yearsServed}yr served, limit ${o.termLimit}yr`).join('; ')}
+          </div>` : ''}
+        </div>
+      </div>
+    </div>
+
+    ${aiInsightSkeletonHtml('fedAiInsight', 'AI Governance Analysis')}
   `);
 
   if (score2025) {
@@ -634,6 +767,11 @@ async function renderFederationDetail(id) {
       }
     });
   }
+
+  // AI governance insight (async, non-blocking)
+  api(`/api/ai/federation-insight/${id}`).then(d => {
+    renderAiInsight('fedAiInsight', 'AI Governance Analysis', d?.insight);
+  }).catch(() => renderAiInsight('fedAiInsight', 'AI Governance Analysis', null));
 }
 
 // ── GOVERNANCE BENCHMARK ───────────────────────────────────────────────────────
@@ -760,6 +898,118 @@ async function renderGovernance() {
       }, responsive: true
     }
   });
+}
+
+// ── COMPLIANCE & GAZETTE ─────────────────────────────────────────────────────
+async function renderCompliance() {
+  loading();
+  const data = await api('/api/compliance/overview');
+  if (!data) return;
+
+  const gradeA = data.filter(f => f.grade === 'A').length;
+  const gradeB = data.filter(f => f.grade === 'B').length;
+  const gradeC = data.filter(f => f.grade === 'C').length;
+  const full   = data.filter(f => f.complianceScore === '5/5').length;
+  const issues = data.filter(f => !f.agmCompliant || !f.finCompliant || !f.stratCompliant || !f.genderCompliant || !f.champCompliant);
+
+  setContent(`
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">Compliance &amp; Gazette</h1>
+        <p class="page-subtitle">Federation grading &amp; statutory compliance — Nat. Sports Assoc. Regulations No. 01 of 2025 (Gazette 2437/24)</p>
+      </div>
+    </div>
+
+    <div class="row g-3 mb-4">
+      <div class="col-6 col-md-3">
+        <div class="kpi-card">
+          <div class="kpi-icon" style="background:#dbeafe;color:#1d4ed8"><i class="bi bi-award-fill"></i></div>
+          <div><div class="kpi-val">${gradeA}</div><div class="kpi-label">Grade A &nbsp;<small style="font-weight:400;color:#64748b">≥25 clubs &amp; Rs.50M+</small></div></div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="kpi-card">
+          <div class="kpi-icon amber"><i class="bi bi-award"></i></div>
+          <div><div class="kpi-val">${gradeB}</div><div class="kpi-label">Grade B &nbsp;<small style="font-weight:400;color:#64748b">≥15 clubs &amp; Rs.10M+</small></div></div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="kpi-card">
+          <div class="kpi-icon" style="background:#f1f5f9;color:#64748b"><i class="bi bi-building"></i></div>
+          <div><div class="kpi-val">${gradeC}</div><div class="kpi-label">Grade C &nbsp;<small style="font-weight:400;color:#64748b">All others</small></div></div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="kpi-card">
+          <div class="kpi-icon green"><i class="bi bi-shield-check"></i></div>
+          <div><div class="kpi-val">${full}</div><div class="kpi-label">Fully Compliant (5/5)</div></div>
+        </div>
+      </div>
+    </div>
+
+    ${issues.length ? `
+    <div class="panel mb-3" style="border-left:4px solid #ef4444">
+      <div class="panel-header"><span class="panel-title" style="color:#b91c1c"><i class="bi bi-exclamation-triangle-fill me-1"></i>Compliance Alerts (${issues.length} federations)</span></div>
+      <div class="panel-body" style="padding:10px 16px">
+        ${issues.slice(0,5).map(f => `
+          <div class="d-flex align-items-center gap-3 py-2 border-bottom">
+            <span class="fw-semibold" style="min-width:220px">${f.name.replace('Sri Lanka ','SL ')}</span>
+            ${!f.agmCompliant     ? `<span class="comp-alert-pill">No 2025 AGM</span>` : ''}
+            ${!f.finCompliant     ? `<span class="comp-alert-pill">Financial stmt missing</span>` : ''}
+            ${!f.stratCompliant   ? `<span class="comp-alert-pill">Outdated strategic plan</span>` : ''}
+            ${!f.genderCompliant  ? `<span class="comp-alert-pill">Gender quota (${f.femaleEcCount}F)</span>` : ''}
+            ${!f.champCompliant   ? `<span class="comp-alert-pill">No nat. championship</span>` : ''}
+          </div>`).join('')}
+        ${issues.length > 5 ? `<div class="text-muted py-2" style="font-size:.8rem">…and ${issues.length - 5} more — see full table below.</div>` : ''}
+      </div>
+    </div>` : ''}
+
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Full Compliance Matrix — All 34 Federations</span>
+        <span class="text-muted" style="font-size:.78rem">Click a row to open federation detail</span>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Federation</th>
+              <th>Grade</th>
+              <th>Clubs</th>
+              <th>Turnover</th>
+              <th title="Annual General Meeting held in 2025">AGM 2025</th>
+              <th title="Audited financial statements submitted in 2025">Fin. Stmt</th>
+              <th title="Strategic plan covering 2024 or 2025">Strat. Plan</th>
+              <th title="Minimum 2 female EC members (where female athletes participate)">Gender ≥2F</th>
+              <th title="National championship conducted in 2025">Nat. Champ.</th>
+              <th>Score</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.map(f => `<tr onclick="window.location.hash='#/federation/${f.id}'" style="cursor:pointer">
+              <td>
+                <div class="d-flex align-items-center gap-2">
+                  <div style="width:8px;height:8px;border-radius:50%;background:${f.color};flex-shrink:0"></div>
+                  <span class="fw-semibold" style="font-size:.82rem">${f.name.replace('Sri Lanka ','SL ')}</span>
+                </div>
+              </td>
+              <td>${gradeBadge(f.grade)}</td>
+              <td class="text-muted" style="font-size:.82rem">${f.affiliated_clubs || '—'}</td>
+              <td class="text-muted" style="font-size:.82rem">${fmtLKR(f.annual_turnover)}</td>
+              <td class="text-center">${compCheck(f.agmCompliant, f.agm_last_date || 'Not recorded')}</td>
+              <td class="text-center">${compCheck(f.finCompliant, f.financial_stmt_date || 'Not submitted')}</td>
+              <td class="text-center">${compCheck(f.stratCompliant, f.strategic_plan_year ? 'Plan '+f.strategic_plan_year : 'Not recorded')}</td>
+              <td class="text-center">${compCheck(f.genderCompliant, f.femaleEcCount + ' female EC officers')}</td>
+              <td class="text-center">${compCheck(f.champCompliant, f.national_championship_date || 'Not held')}</td>
+              <td>
+                <div class="comp-score-pill ${f.complianceScore==='5/5'?'comp-full':parseInt(f.complianceScore)>=3?'comp-mid':'comp-low'}">${f.complianceScore}</div>
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `);
 }
 
 // ── ATHLETES ─────────────────────────────────────────────────────────────────
@@ -971,6 +1221,8 @@ async function renderAthleteDetail(id) {
         </div>
       </div>
     </div>
+
+    ${aiInsightSkeletonHtml('athAiInsight', 'AI Coaching Insight')}
   `);
 
   // Biometric chart
@@ -1056,6 +1308,11 @@ async function renderAthleteDetail(id) {
       }
     });
   }
+
+  // AI coaching insight (async, non-blocking)
+  api(`/api/ai/athlete-insight/${id}`).then(d => {
+    renderAiInsight('athAiInsight', 'AI Coaching Insight', d?.insight);
+  }).catch(() => renderAiInsight('athAiInsight', 'AI Coaching Insight', null));
 }
 
 // ── FIT FOR LIFE ───────────────────────────────────────────────────────────────
@@ -1503,6 +1760,52 @@ function openActivityForm(athleteId, athleteName) {
   }, 'Log Activity');
 }
 
+// ── EC OFFICER FORM ───────────────────────────────────────────────────────────
+function openEcOfficerForm(fedId) {
+  const thisYear = new Date().getFullYear();
+  const roleOpts = ['President','Secretary','Treasurer','Vice President','EC Member','Deputy Secretary'].map(r=>`<option>${r}</option>`).join('');
+  const html = `
+    <div class="row g-3">
+      <div class="col-8">${fmtInput('Full Name *', `<input name="name" class="form-control" placeholder="e.g. Kamani Jayaratne" required>`)}</div>
+      <div class="col-4">${fmtInput('Gender *', `<select name="gender" class="form-select" required><option value="M">Male</option><option value="F">Female</option></select>`)}</div>
+      <div class="col-8">${fmtInput('Role / Position *', `<select name="role" class="form-select" required>${roleOpts}</select>`)}</div>
+      <div class="col-4">${fmtInput('Year Appointed *', `<input type="number" name="appointed_year" class="form-control" value="${thisYear}" min="1990" max="${thisYear}" required>`)}</div>
+    </div>`;
+  showModal('Add EC Officer', html, async fd => {
+    await postApi(`/api/federations/${fedId}/ec-officers`, fdToObj(fd));
+    closeModal();
+    showToast('EC Officer added to register');
+    renderFederationDetail(fedId);
+  }, 'Add Officer');
+}
+
+// ── COMPLIANCE UPDATE FORM ────────────────────────────────────────────────────
+async function openComplianceForm(fedId) {
+  const f = await api(`/api/federations/${fedId}`);
+  if (!f) return;
+  const thisYear = new Date().getFullYear();
+  const html = `
+    <p class="text-muted mb-3" style="font-size:.82rem">Updating statutory compliance data for <strong>${f.name}</strong></p>
+    <p class="form-section-title">Gazette Compliance Dates</p>
+    <div class="row g-3">
+      <div class="col-6">${fmtInput('AGM Date', `<input type="date" name="agm_last_date" class="form-control" value="${f.agm_last_date||''}">`)}</div>
+      <div class="col-6">${fmtInput('Financial Stmt Submitted', `<input type="date" name="financial_stmt_date" class="form-control" value="${f.financial_stmt_date||''}">`)}</div>
+      <div class="col-6">${fmtInput('Strategic Plan Year', `<input type="number" name="strategic_plan_year" class="form-control" value="${f.strategic_plan_year||''}" min="2020" max="${thisYear+2}" placeholder="${thisYear}">`)}</div>
+      <div class="col-6">${fmtInput('National Championship Date', `<input type="date" name="national_championship_date" class="form-control" value="${f.national_championship_date||''}">`)}</div>
+    </div>
+    <p class="form-section-title mt-3">Federation Grading Inputs</p>
+    <div class="row g-3">
+      <div class="col-6">${fmtInput('Affiliated Clubs / District Assoc.', `<input type="number" name="affiliated_clubs" class="form-control" value="${f.affiliated_clubs||0}" min="0" placeholder="No. of affiliated clubs">`)}</div>
+      <div class="col-6">${fmtInput('Annual Turnover (LKR)', `<input type="number" name="annual_turnover" class="form-control" value="${f.annual_turnover||0}" min="0" placeholder="e.g. 5000000">`)}</div>
+    </div>`;
+  showModal('Update Compliance Data', html, async fd => {
+    await putApi(`/api/federations/${fedId}/compliance`, fdToObj(fd));
+    closeModal();
+    showToast('Compliance data updated');
+    renderFederationDetail(fedId);
+  }, 'Save');
+}
+
 // ── SETTINGS ───────────────────────────────────────────────────────────────────
 function renderSettings() {
   setContent(`
@@ -1535,4 +1838,300 @@ function renderSettings() {
       </div>
     </div>
   `);
+}
+
+// ── CHATBOT ───────────────────────────────────────────────────────────────────
+let chatHistory = [];
+
+function toggleChatbot() {
+  const panel = document.getElementById('chatbotPanel');
+  const icon  = document.getElementById('chatbotIcon');
+  const isHidden = panel.classList.contains('d-none');
+  panel.classList.toggle('d-none', !isHidden);
+  if (!isHidden) panel.classList.remove('maximized');
+  icon.className = isHidden ? 'bi bi-x-lg' : 'bi bi-stars';
+  if (isHidden) setTimeout(() => document.getElementById('chatbotInput')?.focus(), 50);
+}
+
+function toggleMaximize() {
+  const panel  = document.getElementById('chatbotPanel');
+  const btn    = document.getElementById('chatbotMaxBtn');
+  const isMax  = panel.classList.toggle('maximized');
+  btn.innerHTML = isMax
+    ? '<i class="bi bi-fullscreen-exit"></i>'
+    : '<i class="bi bi-arrows-fullscreen"></i>';
+  btn.title = isMax ? 'Restore' : 'Expand';
+  setTimeout(() => document.getElementById('chatbotMessages').scrollTop = 99999, 280);
+}
+
+async function sendChat() {
+  const input = document.getElementById('chatbotInput');
+  const msg   = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+  const btn = document.getElementById('chatbotSendBtn');
+  btn.disabled = true;
+
+  appendChatMsg(msg, 'user');
+  const typingEl = appendChatMsg('Thinking…', 'ai', true);
+
+  try {
+    const r = await fetch('/api/ai/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg, history: chatHistory }),
+    });
+    const d = await r.json();
+    typingEl.remove();
+    const reply = d.reply || 'Sorry, I couldn\'t generate a response right now.';
+    appendChatMsg(reply, 'ai', false, msg);
+    chatHistory.push({ role: 'user', content: msg });
+    chatHistory.push({ role: 'assistant', content: reply });
+    if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
+  } catch {
+    typingEl.remove();
+    appendChatMsg('Connection error — please try again.', 'ai');
+  }
+  btn.disabled = false;
+  input.focus();
+}
+
+let _chatTableIdx = 0;
+
+function chatMarkdown(text, question = '') {
+  const lines = text.split('\n');
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.trim().startsWith('|')) {
+      const tableLines = [];
+      while (i < lines.length && lines[i].trim().startsWith('|')) {
+        tableLines.push(lines[i]);
+        i++;
+      }
+      const rows = tableLines.filter(l => !/^\s*\|[\s\-:|]+\|\s*$/.test(l));
+      const tid = `cht-${++_chatTableIdx}`;
+      let tableHtml = `<table class="chat-table" id="${tid}"><thead>`;
+      rows.forEach((row, ri) => {
+        const cells = row.split('|').slice(1, -1).map(c => c.trim());
+        if (ri === 0) {
+          tableHtml += '<tr>' + cells.map(c => `<th>${inlineMarkdown(c)}</th>`).join('') + '</tr></thead><tbody>';
+        } else {
+          tableHtml += '<tr>' + cells.map(c => `<td>${inlineMarkdown(c)}</td>`).join('') + '</tr>';
+        }
+      });
+      tableHtml += '</tbody></table>';
+      const safeQ = question.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      out.push(`
+        <div class="chat-table-wrap" data-question="${safeQ}">
+          <div class="chat-table-export">
+            <span class="chat-export-label">Export:</span>
+            <button class="chat-export-btn excel" onclick="exportChatTable('${tid}','excel')" title="Download Excel (.xlsx)"><i class="bi bi-file-earmark-excel-fill"></i> Excel</button>
+            <button class="chat-export-btn pdf"   onclick="exportChatTable('${tid}','pdf')"   title="Download PDF"><i class="bi bi-file-earmark-pdf-fill"></i> PDF</button>
+            <button class="chat-export-btn word"  onclick="exportChatTable('${tid}','word')"  title="Download Word (.doc)"><i class="bi bi-file-earmark-word-fill"></i> Word</button>
+          </div>
+          ${tableHtml}
+        </div>`);
+    } else {
+      const trimmed = line.trim();
+      if (trimmed === '') {
+        out.push('<br>');
+      } else {
+        out.push(`<p>${inlineMarkdown(trimmed)}</p>`);
+      }
+      i++;
+    }
+  }
+  return out.join('');
+}
+
+function inlineMarkdown(text) {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/`(.+?)`/g, '<code>$1</code>');
+}
+
+function appendChatMsg(text, who, isTyping = false, question = '') {
+  const msgs = document.getElementById('chatbotMessages');
+  const div  = document.createElement('div');
+  div.className = `chat-msg chat-${who}${isTyping ? ' chat-typing' : ''}`;
+  const inner = isTyping ? text : chatMarkdown(text, question);
+  div.innerHTML = `<div class="chat-bubble">${inner}</div>`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  return div;
+}
+
+// ── CHATBOT TABLE EXPORT ─────────────────────────────────────────────────────
+function exportChatTable(tableId, format) {
+  const table    = document.getElementById(tableId);
+  if (!table) return;
+  const wrap     = table.closest('.chat-table-wrap');
+  const question = wrap?.dataset.question || '';
+  const headers  = [...table.querySelectorAll('thead th')].map(th => th.innerText.trim());
+  const rows     = [...table.querySelectorAll('tbody tr')].map(tr =>
+    [...tr.querySelectorAll('td')].map(td => td.innerText.trim())
+  );
+  const filename = 'SLSIE_' + new Date().toISOString().slice(0, 10);
+  if (format === 'excel') _exportXlsx(headers, rows, filename, question);
+  if (format === 'pdf')   _exportPdf(headers, rows, filename, question);
+  if (format === 'word')  _exportWord(headers, rows, filename, question);
+}
+
+function _exportXlsx(headers, rows, filename, question) {
+  const dateStr  = new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
+  const titleRow = ['SLSIE — Sri Lanka Sports Intelligence Ecosystem'];
+  const queryRow = question ? [`Query: ${question}`] : [];
+  const dateRow  = [`Generated: ${dateStr} | Source: AI Assistant Chat`];
+  const aoa = [titleRow, ...queryRow, dateRow, [], headers, ...rows];
+  const ws  = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = headers.map(() => ({ wch: 24 }));
+  // Bold the title row
+  ws['A1'] = { v: titleRow[0], t: 's', s: { font: { bold: true, sz: 14 } } };
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'SLSIE Data');
+  XLSX.writeFile(wb, filename + '.xlsx');
+}
+
+function _exportPdf(headers, rows, filename, question) {
+  const dateStr  = new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
+  const queryBlock = question
+    ? `<div class="query"><strong>Query:</strong> ${question}</div>`
+    : '';
+  const rowsHtml = rows.map(r =>
+    '<tr>' + r.map(c => `<td>${c}</td>`).join('') + '</tr>'
+  ).join('');
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${filename}</title>
+    <style>
+      *{box-sizing:border-box;margin:0;padding:0}
+      body{font-family:'Segoe UI',Arial,sans-serif;padding:32px 40px;color:#1e293b;font-size:10pt}
+      .org{font-size:7.5pt;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+      h2{font-size:15pt;font-weight:800;color:#1F4E79;margin-bottom:4px}
+      .meta{font-size:8pt;color:#94a3b8;margin-bottom:10px}
+      .query{background:#eff6ff;border-left:3px solid #3b82f6;padding:8px 12px;font-size:9pt;color:#1e3a5f;margin-bottom:18px;border-radius:0 6px 6px 0}
+      table{width:100%;border-collapse:collapse;font-size:9.5pt;margin-top:4px}
+      thead th{background:#1F4E79;color:#fff;padding:8px 10px;text-align:left;font-size:8.5pt;font-weight:600}
+      tbody td{border:1px solid #e2e8f0;padding:7px 10px;color:#1e293b}
+      tbody tr:nth-child(even) td{background:#f8faff}
+      .footer{margin-top:24px;border-top:1px solid #e2e8f0;padding-top:8px;font-size:7.5pt;color:#94a3b8;display:flex;justify-content:space-between}
+      @media print{@page{margin:1.2cm 1.5cm}body{padding:0}}
+    </style>
+    <script>window.onload=()=>setTimeout(()=>window.print(),400);<\/script>
+    </head><body>
+    <div class="org">National Olympic Committee of Sri Lanka · SLSIE v1.0</div>
+    <h2>AI Assistant Query Report</h2>
+    <div class="meta">Generated: ${dateStr} &nbsp;|&nbsp; Source: AI Chat Assistant</div>
+    ${queryBlock}
+    <table>
+      <thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+    <div class="footer">
+      <span>SLSIE — Sri Lanka Sports Intelligence Ecosystem</span>
+      <span>Classification: Internal Use</span>
+    </div>
+    </body></html>`;
+  const win = window.open('', '_blank', 'width=900,height=680');
+  win.document.write(html);
+  win.document.close();
+}
+
+function _exportWord(headers, rows, filename, question) {
+  const dateStr  = new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
+  const queryBlock = question
+    ? `<div class="query"><strong>Query:</strong> ${question}</div>`
+    : '';
+  const rowsHtml = rows.map(r =>
+    '<tr>' + r.map(c => `<td>${c}</td>`).join('') + '</tr>'
+  ).join('');
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
+    xmlns:w="urn:schemas-microsoft-com:office:word"
+    xmlns="http://www.w3.org/TR/REC-html40">
+    <head><meta charset="utf-8">
+    <style>
+      body{font-family:Arial,sans-serif;font-size:10pt;color:#1e293b;margin:2cm}
+      .org{font-size:7pt;color:#94a3b8;text-transform:uppercase;letter-spacing:.5pt;margin-bottom:4pt}
+      h2{font-size:15pt;font-weight:bold;color:#1F4E79;margin:0 0 4pt}
+      .meta{font-size:8pt;color:#94a3b8;margin-bottom:8pt}
+      .query{background:#eff6ff;border-left:3pt solid #3b82f6;padding:6pt 10pt;font-size:9pt;color:#1e3a5f;margin-bottom:14pt}
+      table{width:100%;border-collapse:collapse}
+      thead th{background:#1F4E79;color:#fff;padding:6pt 8pt;text-align:left;font-size:9pt;font-weight:bold}
+      tbody td{border:1pt solid #cbd5e1;padding:5pt 8pt;font-size:9.5pt;color:#1e293b}
+    </style></head><body>
+    <div class="org">National Olympic Committee of Sri Lanka · SLSIE v1.0</div>
+    <h2>AI Assistant Query Report</h2>
+    <div class="meta">Generated: ${dateStr} | Source: AI Chat Assistant</div>
+    ${queryBlock}
+    <table>
+      <thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+    </body></html>`;
+  const blob = new Blob(['﻿' + html], { type: 'application/msword' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename + '.doc';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ── AI INSIGHT HELPERS ────────────────────────────────────────────────────────
+function aiInsightSkeletonHtml(containerId, label) {
+  return `<div id="${containerId}">
+    <div class="panel mt-3">
+      <div class="panel-header"><span class="panel-title"><i class="bi bi-stars me-1" style="color:#7c3aed"></i>${label}</span></div>
+      <div class="panel-body">
+        <div class="ai-insight-panel">
+          <div class="ai-insight-header">
+            <div class="ai-insight-icon"><i class="bi bi-stars"></i></div>
+            <div class="ai-insight-label">AI Analysis · Loading</div>
+          </div>
+          <div class="ai-insight-skeleton">
+            <div class="ai-skel-line" style="width:95%"></div>
+            <div class="ai-skel-line" style="width:82%"></div>
+            <div class="ai-skel-line" style="width:88%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderAiInsight(containerId, label, text) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  if (!text) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <div class="panel mt-3">
+      <div class="panel-header"><span class="panel-title"><i class="bi bi-stars me-1" style="color:#7c3aed"></i>${label}</span></div>
+      <div class="panel-body">
+        <div class="ai-insight-panel">
+          <div class="ai-insight-header">
+            <div class="ai-insight-icon"><i class="bi bi-stars"></i></div>
+            <div class="ai-insight-label">AI Analysis · SLSIE Intelligence Engine</div>
+          </div>
+          <div class="ai-insight-text">${insightMarkdown(text)}</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function insightMarkdown(raw) {
+  // Safety net: if AI puts labelled sections inline on one line, split them onto their own lines
+  // e.g. "**Key Finding:** ... **Recommendation:** ..." → each on its own paragraph
+  const text = raw
+    .replace(/\s+\*\*([^*]+:)\*\*/g, '\n\n**$1**')  // break before **Label:** mid-sentence
+    .trim();
+
+  return text.split('\n').map(line => {
+    const t = line.trim();
+    if (!t) return '';
+    if (t.startsWith('### ')) return `<h4 class="ai-h4">${inlineMarkdown(t.slice(4))}</h4>`;
+    if (t.startsWith('## '))  return `<h3 class="ai-h3">${inlineMarkdown(t.slice(3))}</h3>`;
+    if (t.startsWith('# '))   return `<h3 class="ai-h3">${inlineMarkdown(t.slice(2))}</h3>`;
+    if (t.startsWith('- ') || t.startsWith('* ')) return `<li>${inlineMarkdown(t.slice(2))}</li>`;
+    return `<p class="ai-p">${inlineMarkdown(t)}</p>`;
+  }).join('').replace(/(<li>.*?<\/li>)+/gs, m => `<ul class="ai-ul">${m}</ul>`);
 }
